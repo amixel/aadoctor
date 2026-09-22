@@ -16,6 +16,79 @@ enabled = true
 # content is read, never the file from the start (README.md section 17).
 interval_seconds = 10
 
+[load]
+# Load is read from /proc/loadavg and normalised by CPU count. It is the signal
+# that tells aaDoctor when to look at the logs - never the diagnosis itself.
+# Remember that a Linux load average also counts tasks waiting on disk, so a
+# high load does not mean the CPUs are busy (README.md section 21).
+enabled = true
+
+# Load per core that opens an incident, and the level that marks it critical.
+trigger_per_cpu = 1.0
+critical_per_cpu = 2.0
+
+# An incident closes below this, not below trigger_per_cpu: using one number
+# for both would make an incident flicker on and off around the threshold.
+recovery_per_cpu = 0.75
+
+# Consecutive readings needed before opening and before closing, so one noisy
+# sample neither creates nor ends an incident.
+trigger_polls = 2
+recovery_polls = 3
+
+[incidents]
+# aaDoctor deletes only its own incident files under /var/lib/aadoctor.
+# aaPanel logs are never touched (README.md section 63).
+retention_days = 30
+
+# Thresholds the deterministic rules fire on (SPEC-007). Left out entirely,
+# the built-in defaults below are used - which is what most servers should do.
+# They are listed so that a value used to produce a diagnosis can always be
+# looked up, and they are commented out so that this file does not pin them:
+# these are unvalidated starting points and later versions will change them.
+#
+# [rules]
+# Nothing share-based fires below this many requests in the window. Nine
+# requests out of ten is a 90% share and means nothing.
+# min_volume = 100
+#
+# One site's share of all requests, and the share at which the evidence is as
+# strong as the measure can express.
+# site_share = 0.70
+# site_share_ceiling = 0.85
+#
+# One path's share of its site's requests. Query strings are not counted, so
+# this is the path, not the URL.
+# url_share = 0.50
+# url_share_ceiling = 0.75
+#
+# One address's share of its site's requests. High concentration from one
+# address may be a CDN, a proxy, NAT or an integration - it is reported as
+# concentration and never as an attack (README.md section 27).
+# ip_share = 0.50
+# ip_share_ceiling = 0.75
+#
+# 404s need both a share and a rate: a 404 is cheap to serve, so on its own it
+# usually explains noise rather than load.
+# not_found_share = 0.30
+# not_found_min_rate = 5.0
+#
+# 5xx fires on either a share or a rate, above an absolute floor so that three
+# errors are never called a spike.
+# http_5xx_share = 0.01
+# http_5xx_min_rate = 1.0
+# http_5xx_min_count = 10
+#
+# Error-log events needed in the window before each finding fires.
+# upstream_timeout_min = 5
+# fastcgi_error_min = 5
+# php_error_min = 10
+#
+# How much faster the last minute must be than the minutes before it. This is
+# a within-window comparison, not a historical baseline, so the finding is
+# capped at MEDIUM confidence whatever the ratio.
+# traffic_spike_factor = 3.0
+
 [discovery]
 # How often the daemon re-reads the aaPanel vhost files, so that a site added
 # in aaPanel is picked up without restarting aaDoctor (README.md section 16).

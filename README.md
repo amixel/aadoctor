@@ -447,13 +447,23 @@ aadoctor/
 ├── uninstall.sh
 │
 ├── aadoctor
+├── VERSION
 ├── config.example.toml
+│
+├── tools/
+│   └── package.sh
 │
 ├── src/
 │   └── aadoctor/
 │       ├── __init__.py
+│       ├── __main__.py
 │       ├── cli.py
 │       ├── daemon.py
+│       ├── config.py
+│       ├── environment.py
+│       ├── paths.py
+│       ├── runtime.py
+│       ├── service.py
 │       │
 │       ├── discovery/
 │       │   ├── __init__.py
@@ -472,11 +482,12 @@ aadoctor/
 │       ├── analyzers/
 │       │   ├── __init__.py
 │       │   ├── traffic.py
-│       │   ├── errors.py
-│       │   └── incidents.py
+│       │   ├── incidents.py
+│       │   └── diagnosis.py
 │       │
 │       ├── rules/
 │       │   ├── __init__.py
+│       │   ├── facts.py
 │       │   └── builtin.py
 │       │
 │       ├── ai/
@@ -518,7 +529,8 @@ Estado:
 
 ```text
 /var/lib/aadoctor/
-├── state.json
+├── state.json      offsets dos logs acompanhados
+├── runtime.json    janelas atuais, publicadas para a CLI ler
 ├── offsets/
 └── incidents/
 ```
@@ -594,12 +606,27 @@ interval_seconds = 60
 enabled = true
 trigger_per_cpu = 1.00
 critical_per_cpu = 2.00
+recovery_per_cpu = 0.75
+trigger_polls = 2
+recovery_polls = 3
 
 [logs]
 window_seconds = 300
 
 [incidents]
 retention_days = 30
+
+# Thresholds das regras determinísticas (SPEC-007). A seção é opcional e vem
+# comentada: os defaults embutidos são o que praticamente todo servidor deve
+# usar. Estão documentados um a um em config.example.toml, e os valores de fato
+# usados saem em `aadoctor diagnose --json`.
+#
+# São pontos de partida não validados. Expor dezenas de botões antes de saber
+# quais realmente precisam de ajuste só torna a ferramenta mais difícil de usar.
+#
+# [rules]
+# min_volume = 100
+# site_share = 0.70
 
 [mysql]
 enabled = false
@@ -1261,6 +1288,14 @@ Exemplo:
 
 # 37. Formato de incidente
 
+> **Nota de implementação.** O arquivo de incidente **não** guarda `findings`
+> nem `suspect`. Ele registra o que foi medido; a leitura dessa evidência é
+> calculada sob demanda por `aadoctor diagnose`, o que permite reanalisar um
+> incidente antigo com regras melhores em vez de congelá-lo com a opinião de
+> hoje. Ver [SPEC-007](docs/specs/SPEC-007-deterministic-rules.md) e
+> [SPEC-006](docs/specs/SPEC-006-load-incident-detection.md). O exemplo abaixo
+> permanece como referência do que o diagnóstico produz.
+
 Exemplo:
 
 ```json
@@ -1477,57 +1512,69 @@ upstream timeout                  5
 
 Exemplo:
 
+Saída real, sobre um incidente já gravado:
+
 ```text
-SERVER DEGRADATION DETECTED
+aaDoctor Diagnosis
 
-22/09/2026 12:41:20
+Incident:  2026-09-22T12-41-20  (CLOSED, critical)
+Peak load: 9.82 over 4 CPUs - 2.45 per core
+Window:    300s at the peak, 300s of data, 10,833 requests
 
-Load:
-9.82
-
-CPUs:
-4
-
-Load/core:
-2.45
-
-
-PROBABLE RESPONSIBLE SITE
-
+PRIMARY SITE
 loja.com.br
 
-
-PRIMARY FINDING
-
-Excessive requests to:
-
+PRIMARY PATH
 /wp-cron.php
 
+ASSOCIATED IP
+45.xxx.xxx.xxx
+high request concentration from one address; it may be a CDN, proxy, NAT,
+integration or crawler rather than an attack
 
 EVIDENCE
+- loja.com.br generated 82.3% of requests (8,922 of 10,833)
+- /wp-cron.php generated 53.9% of loja.com.br's requests (4,812 of 8,922)
+- 45.xxx.xxx.xxx generated 46.0% of loja.com.br's requests (4,102)
+- 38 upstream timeout errors
+- 17 responses were 5xx (502: 17)
 
-4.812 requests / 5 min
+FINDINGS
+VERY HIGH  ONE_SITE_DOMINATING
+HIGH       ONE_URL_DOMINATING
+HIGH       UPSTREAM_TIMEOUT
+MEDIUM     ONE_IP_DOMINATING
 
-16.0 requests/sec average
-
-54% of all server requests
-
-Top IP:
-45.xxx.xxx.xxx
-
-Requests from IP:
-4.102
-
-Additional evidence:
-
-38 upstream timeouts
-17 HTTP 502 responses
-
+NOT EVALUABLE
+TRAFFIC_SPIKE          insufficient previous window
 
 CONFIDENCE
+VERY HIGH
 
-HIGH
+Evidence points to loja.com.br, with /wp-cron.php as the primary suspect.
 ```
+
+Diz **PRIMARY PATH**, não "URL": o que é agregado é o path, sem query string.
+
+`NOT EVALUABLE` lista regras que não puderam ser decididas. Ausência de
+finding é ambígua — a regra pode ter olhado e não visto nada, ou nunca ter
+tido dado para olhar — e quem não distingue as duas coisas lê silêncio como
+calmaria.
+
+Quando nada é conclusivo, o comando diz isso:
+
+```text
+CONFIDENCE
+-
+
+No clear log-based cause identified. The load rise is recorded, but the
+monitored Nginx and PHP logs show no dominant site, path, address or error
+behind it.
+```
+
+Esse também é um resultado útil. A causa pode estar em I/O, backup, banco
+remoto ou num processo que não pertence a site nenhum — nada disso aparece em
+log de servidor web, e o relatório termina dizendo exatamente isso.
 
 ---
 

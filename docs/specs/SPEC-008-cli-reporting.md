@@ -1,6 +1,11 @@
 # SPEC-008 — CLI Reporting
 
-Status: Draft
+Status: In Progress
+
+Implemented: `doctor`, `status`, `sites`, `top`, `incidents`, `show`,
+`diagnose`, `enable`, `disable`, `update`, `uninstall`, `daemon`. Not
+implemented, and deliberately not registered: `explain` - it waits for the
+spec that gives it something to say (SPEC-009).
 
 Related: [README.md](../../README.md) §38–§44, §93 ·
 Backlog: AAD-050 … AAD-055, AAD-063
@@ -26,7 +31,7 @@ evidence first, with no interactive UI.
 
 ## Current context
 
-No CLI exists. Command names and output shapes are fixed by README §38–§44.
+Command names and output shapes are fixed by README §38–§44.
 
 ---
 
@@ -56,11 +61,12 @@ Future commands:
 explain     AI explanation of a stored incident (Phase 7, SPEC-009)
 ```
 
-A command that is not implemented is **not registered**: `aadoctor top` today
-is a usage error listing the commands that exist, not a stub printing "not
-implemented". Nothing may look implemented when it is not. As of 0.1.0-dev the
-registered commands are `doctor`, `status`, `sites`, `enable`, `disable`,
-`update`, `uninstall` and `daemon`.
+A command that is not implemented is **not registered**: `aadoctor explain`
+today is a usage error listing the commands that exist, not a stub printing
+"not implemented". Nothing may look implemented when it is not. As of
+0.1.0-dev the registered commands are `doctor`, `status`, `sites`, `top`,
+`incidents`, `show`, `diagnose`, `enable`, `disable`, `update`, `uninstall`
+and `daemon`.
 
 `update` takes `--version X.Y.Z` and `--force`, and delegates to `install.sh`
 in release mode ([SPEC-001](SPEC-001-installation-lifecycle.md)).
@@ -97,20 +103,33 @@ any check fails, the closing line says the environment is not ready.
 
 ### status
 
-Per README §40: version, aaPanel detection, site and log counts, daemon state,
-monitoring state, current load, CPU count, load per core, last incident.
+Per README §40: version, aaPanel detection, site and log counts, current load
+and load per core, whether an incident is open, daemon state and configuration
+source. The load and incident lines come from what the daemon last published,
+so they are absent when it has published nothing.
 
 Works with the daemon stopped and says so plainly.
 
 ### top
 
-Per README §41: top sites, top path, top IP and error counts for the current
-window. Must also show:
+Per README §41: top sites, top paths with the site they belong to, top IPs,
+status classes and error kinds for the current window. It also shows:
 
-- the window length actually used;
-- the `other` bucket when the cardinality cap engaged
+- the window length actually used, via `--window 1m` or `--window 5m`;
+- how old the published snapshot is, and a warning when it is stale, so an old
+  snapshot is never read as the present;
+- the `other` volume when a cardinality cap engaged
   ([SPEC-005](SPEC-005-traffic-aggregation.md));
-- a clear statement when the daemon holds no data yet.
+- a warning when a large share of access lines did not parse, because the
+  numbers then describe only part of the traffic;
+- a clear statement when the daemon has published nothing yet.
+
+`--site NAME` shows one site in detail: its paths, its addresses, its statuses
+and its errors. `--json` prints the window as published.
+
+`top` describes what happened. It does not name a cause, a culprit or an
+attack - that is [SPEC-007](SPEC-007-deterministic-rules.md), and a report that
+quietly starts concluding would be the most dangerous thing in this tool.
 
 ### sites
 
@@ -135,26 +154,78 @@ without `/www`. `--json` prints the full records, including every
 ### diagnose
 
 Per README §42: the evidence-first report — load context, probable responsible
-site, primary finding, evidence, confidence.
+site, primary suspect, evidence, confidence.
+
+```text
+aadoctor diagnose            the most recent incident
+aadoctor diagnose <id>       that incident, however old
+aadoctor diagnose --json     the whole document
+```
+
+The report is computed on demand from the stored incident and writes nothing
+([SPEC-007](SPEC-007-deterministic-rules.md)). An incident from weeks ago is
+diagnosable after its logs have rotated away, and it is read with today's
+rules — so the output carries `ruleset_version`.
+
+Sections, in order, each omitted when it has nothing to say:
+
+```text
+PRIMARY SITE            the site the evidence points at
+PRIMARY PATH            not "URL": the query string is not counted
+ASSOCIATED IP           with the CDN / proxy / NAT / crawler caveat
+ERROR CONCENTRATION     a different site carrying the failures
+TRAFFIC CONCENTRATION   a different site carrying the traffic
+EVIDENCE                one line per finding, the numbers included
+FINDINGS                level and code, strongest first
+NOT EVALUABLE           rules that could not be decided, and why
+DATA QUALITY            short window, unparsed lines, pruned dimensions
+CONFIDENCE              LOW | MEDIUM | HIGH | VERY HIGH, or `-`
+```
 
 Rules:
 
 - Every claim is followed by the numbers behind it.
-- Confidence comes from [SPEC-007](SPEC-007-deterministic-rules.md).
-- When no degradation is detected, say so; do not invent a suspect.
-- When load is high but the logs show nothing, say that explicitly. "The cause is
-  not visible in the web logs" is a useful answer.
+- Confidence comes from [SPEC-007](SPEC-007-deterministic-rules.md), and is
+  never called a probability.
+- When nothing is conclusive, say so; do not invent a suspect. The confidence
+  line reads `-` rather than a low number, because there is no conclusion to
+  put a number on.
+- When load is high but the logs show nothing, say that explicitly. "The cause
+  is not visible in the web logs" is a useful answer, and the report closes by
+  naming what could never appear in them — I/O, a backup, a remote database, a
+  process owned by no site.
+- Prose is wrapped; the report is read over SSH during an incident.
+
+`NOT EVALUABLE` is the section that stops silence being misread. A rule that
+never had the data to run is not a rule that ran and found nothing, and the
+difference matters to a reader and to
+[SPEC-009](SPEC-009-ai-explainer.md) later.
+
+Exit code is `0` whatever the finding. Resolving the TBD below: an active
+incident is a normal result, not a command failure.
 
 ### incidents
 
-Lists stored incidents, newest first: id, start time, primary finding,
-confidence, severity. Supports a count limit. An empty directory produces a
-clear empty result, not an error.
+Lists stored incidents, newest first: id, start time, duration, peak load per
+core and severity. `--limit N` (default 20) and `--json`. An empty directory
+produces a clear empty result, not an error, and says where the daemon would
+write them.
+
+No finding and no confidence appear here: an incident records when the server
+was under load and what the logs showed, and interpreting that is SPEC-007.
 
 ### show
 
-Renders one incident by id, from the stored JSON only — never recomputed.
-An unknown id exits non-zero with a message naming what was searched.
+Renders one incident by id, from the stored JSON only - never recomputed. The
+load at the start and at the peak, then the traffic frozen with it: top sites,
+top paths per site, top addresses, status classes and error kinds. `--json`
+prints the record as stored.
+
+It prints how much data the window actually covers, so a snapshot taken shortly
+after the daemon started is not read as five minutes of evidence.
+
+An unknown id exits with `3` and a message naming where it looked. An id that
+is not an incident id - a path, say - never reaches the filesystem.
 
 ### Output conventions
 
@@ -181,8 +252,10 @@ An unknown id exits non-zero with a message naming what was searched.
 `argparse` exits with `2` on a usage error by default; the parser overrides
 that to `1` so the table above holds.
 
-TBD: whether `diagnose` should exit non-zero when it finds an active incident.
-Useful for scripting, surprising interactively. Undecided.
+Decided: `diagnose` exits `0` whatever it concludes. A non-zero code for an
+active incident would be useful in a script and surprising at a prompt, and
+the surprising reading is the one someone gets at three in the morning. An
+unknown id still exits `3`.
 
 ### Privilege
 
@@ -195,11 +268,13 @@ Lifecycle commands require root.
 ## Technical behavior
 
 - The CLI renders; it does not analyze. `show` and `incidents` read stored JSON;
-  `top` and `diagnose` read the daemon's current state.
-- How the CLI reaches a running daemon's in-memory windows is **TBD**: a state
-  file written periodically, or a local socket. The file approach is simpler and
-  fits [ADR-003](../adr/ADR-003-filesystem-state-without-database.md); it is the
-  default assumption unless staleness proves unacceptable.
+  `top` reads the daemon's current state; `diagnose` reads a stored
+  incident and computes from it.
+- The CLI reaches the daemon's windows through a file: the daemon publishes a
+  bounded snapshot to `/var/lib/aadoctor/runtime.json` once per poll and the
+  CLI reads it, showing its age. No socket, no port, no protocol
+  ([ADR-003](../adr/ADR-003-filesystem-state-without-database.md),
+  [SPEC-005](SPEC-005-traffic-aggregation.md)).
 - No command starts the daemon implicitly.
 - Rendering is deterministic: the same incident file always renders identically.
 - Standard library `argparse` only.
@@ -251,7 +326,7 @@ None. Read-only against `/var/lib/aadoctor/`.
 - [ ] Output is readable at 80 columns and clean when piped.
 - [ ] `show` renders from stored JSON only.
 - [ ] Exit codes follow the table above.
-- [ ] `diagnose` invents no suspect when there is no evidence.
+- [x] `diagnose` invents no suspect when there is no evidence.
 - [ ] Rendering the same incident twice produces identical bytes.
 
 ## Verification

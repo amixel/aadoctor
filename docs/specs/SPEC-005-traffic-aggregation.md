@@ -1,6 +1,10 @@
 # SPEC-005 — Traffic Aggregation
 
-Status: Draft
+Status: Implemented
+
+Implemented in `src/aadoctor/analyzers/traffic.py`, published for the CLI by
+`src/aadoctor/runtime.py`. See **Implementation notes** for the decisions this
+spec left open.
 
 Related: [README.md](../../README.md) §22, §24–§29, §58–§60, §69 ·
 Backlog: AAD-022, AAD-023, AAD-024
@@ -27,7 +31,7 @@ bounded memory, sufficient to answer "who dominated the last five minutes".
 
 ## Current context
 
-Nothing is implemented. Input is access and error records from
+Input is access and error records from
 [SPEC-004](SPEC-004-nginx-log-parsing.md). Output feeds
 [SPEC-006](SPEC-006-load-incident-detection.md),
 [SPEC-007](SPEC-007-deterministic-rules.md) and `aadoctor top`.
@@ -46,15 +50,13 @@ Maintained concurrently (README §22):
 5 minutes
 ```
 
-The primary incident window is 5 minutes, configurable through
-`[logs] window_seconds`.
+The primary incident window is 5 minutes. Ten-second buckets are summed over
+the requested window, so 1 minute is six buckets and 5 minutes is thirty; the
+10-second figure is whatever one bucket holds.
 
-Windows roll on time, not on request count. A window contains records whose
-parsed timestamp falls inside it; records arriving late by more than the window
-length are counted in a `late` counter and dropped from windowed aggregates.
-
-Implementation is bucketed: fixed-size time buckets (for example 10 s) summed
-over the window length. This keeps roll-off cheap and memory predictable.
+Windows roll on time, not on request count. A record belongs to the bucket that
+was current when it arrived - see the implementation notes on why arrival time
+rather than the timestamp on the line.
 
 ### Dimensions
 
@@ -90,24 +92,13 @@ Class counters `2xx / 3xx / 4xx / 5xx`, plus explicit counters for
 
 ### Timing metrics
 
-When `request_time` is present (README §69):
-
-```text
-request count
-average request time
-max request time
-total request time
-```
-
-and the derived cost signal:
-
-```text
-total_cost ≈ requests × average_request_time
-```
-
-`upstream_response_time` is aggregated the same way when present. When the field
-is absent, timing metrics are reported as unavailable, never as zero. A site
-whose format lacks timings must not appear artificially cheap.
+Not aggregated: SPEC-004 does not parse `request_time` or
+`upstream_response_time`, because the supported formats do not carry them and
+guessing at an extra field would produce confident wrong numbers. When a format
+that declares them is supported, the cost signal of README §69
+(`requests × average_request_time`) belongs here. Until then a site whose
+format lacks timings and one whose parser ignores them look the same, which is
+honest.
 
 ### Top-N
 
@@ -129,15 +120,22 @@ Per window and per dimension, tracked keys are capped (README §59). Starting
 points, all configurable and all unvalidated:
 
 ```text
-top paths per window        1000
-top IPs per window          1000
-top user agents per window   200
+top paths per window         1000
+top IPs per window           1000
+top user agents per window    200
+top paths per site            200
+top IPs per site              200
 ```
 
-When the cap is reached, new keys are admitted only by displacing the weakest
-tracked key, and displaced volume accumulates into an `other` bucket. `other` is
-always reported alongside the top-N so a truncated tail is visible rather than
-silently lost.
+Key lengths are capped too - 512 characters for a path, 200 for a user agent -
+and a truncated key is marked, so a cut-down path is never mistaken for a real
+one. A multi-kilobyte URL must not become a dictionary key at that size.
+
+When the cap is reached the table is cut back to its heaviest keys and the
+dropped volume accumulates into an `other` bucket, reported alongside the top-N
+so a truncated tail is visible rather than silently lost. See the
+implementation notes for why the cut is done in batches rather than per
+admission.
 
 Consequence to accept explicitly: counts for keys near the cap are approximate.
 Counts for dominant keys — the ones that matter for every rule in
@@ -157,7 +155,9 @@ Paths are normalized before counting (README §60):
 Rules:
 
 - The query string is stripped for the counted key.
-- A bounded sample of raw query strings is retained per top path, as evidence.
+- No sample of raw query strings is kept: it would put request content in
+  memory and in the published snapshot for little gain. The parser keeps the
+  query on the event, which is where SPEC-007 can reach it.
 - Further normalization of path segments — numeric ids, UUIDs, slugs — is
   **TBD**. The MVP normalizes the query only; segment normalization needs real
   data before it is worth the false-merge risk.
@@ -170,10 +170,12 @@ Total aggregation memory is bounded by:
 sites × dimensions × caps × buckets
 ```
 
-with a documented worst case. Exceeding an overall ceiling drops the least
-valuable dimension first — user agent before IP, IP before path, path before
-site — and logs the degradation. The monitor degrades its own resolution rather
-than the server's stability.
+with a documented worst case. No dimension-dropping ladder is implemented: the
+per-dimension caps above already bound the total, and a mechanism that silently
+stops counting IPs would be worse than the memory it saves. Worst case is
+roughly 30 buckets x (2,400 global keys + 430 per active site), which is a few
+tens of megabytes under a sustained high-cardinality flood and far less in
+normal use.
 
 ---
 
@@ -185,10 +187,77 @@ than the server's stability.
 - Iteration order of counters must not affect rule outcomes: ties are broken by
   a deterministic secondary key (the key string) so identical input yields
   identical top-N.
-- Standard library only: `collections.Counter` / `dict`, `heapq` for top-N.
+- Standard library only: plain dictionaries, sorted when a snapshot is taken.
+  Sorting never happens per event.
 - When one log file serves several sites
   ([SPEC-002](SPEC-002-aapanel-discovery.md)), records are attributed to that
   file's site record and the ambiguity is flagged in the aggregate.
+
+## Implementation notes
+
+Decisions taken while implementing this spec.
+
+**Buckets are indexed by arrival time.** Access timestamps are timezone-aware
+and error timestamps are not (SPEC-004); bucketing by them would mean deciding
+the server's timezone, and a wrong clock in a log line could push traffic into
+the wrong window. Logs arrive within seconds of being written, so arrival time
+answers "what is happening now" just as well. SPEC-006 may revisit this when it
+correlates with load.
+
+**Ten-second buckets, monotonic clock.** Six buckets make a minute, thirty make
+five. A bucket that leaves the window is dropped whole, which is what keeps
+memory tied to key count rather than request count. The monotonic clock is used
+for bucketing so a system time adjustment cannot shift the window; the wall
+clock is used only for the `updated_at` a human reads.
+
+**Cardinality: keep the heaviest, not the first seen.** The obvious bound - stop
+admitting new keys once the table is full - is the one an attacker defeats:
+fill it with noise first and the path that matters never gets in. Instead a
+table grows to twice its limit, then is cut back to the heaviest keys, with the
+dropped volume added to `other`. Admission stays O(1) and the cut is amortised,
+which matters because cardinality explodes exactly when the server is already
+in trouble. Space-Saving proper would scan for the minimum on every admission:
+with 100,000 unique keys in one bucket that is hundreds of millions of
+operations, and aaDoctor would become part of the problem.
+
+The cost of the simpler policy: a key that is cut loses what it had
+accumulated. A key that is genuinely heavy survives every cut, which is the
+property the diagnosis rests on, and there is a test for exactly that.
+
+**Per-site tables, not a full cross-product.** Each site keeps its own paths,
+IPs, statuses and error kinds, because "which IP is hitting which site" is the
+question SPEC-007 has to answer. What is *not* kept is `site × ip × path`:
+naming the exact pair behind a burst would need that, and the memory it costs
+is not yet justified. **TBD** when SPEC-007 shows whether it needs it; the
+per-site top-N usually makes the pair obvious to a reader.
+
+**Caps are constructor arguments, not configuration.** `config.toml` holds only
+keys that something reads, and nobody has needed to change these yet. They are
+module constants, overridable when constructing the aggregator, which is what
+the tests do. Promoting them to `[aggregation]` is a one-line change if a real
+server ever needs it.
+
+**Windows report their own coverage and quality.** `coverage_seconds` says how
+much of the requested window the aggregator has actually been running for, and
+`unparsed_ratio` how much of the traffic the parser could not read. Both were
+added for SPEC-006, which freezes these windows into an incident: a five-minute
+window forty seconds after startup covers forty seconds, and a reader - human
+or SPEC-007 - has to be able to tell.
+
+**Unparsed lines are counted, never as requests.** A line no parser matched is
+not traffic. Counting it as one would inflate the numbers with the parser's own
+blind spots. It is tracked per window and per site so `top` can say the figures
+are incomplete instead of looking precise.
+
+**Nothing is deduplicated.** SPEC-003 may re-read a few lines after a crash, so
+counts can be slightly high for one window afterwards. Detecting duplicates
+would mean remembering individual lines, which is the one thing this design
+avoids.
+
+**Aggregation is not persisted.** A restart starts with empty windows. The only
+state that survives is the log offsets; incidents get their own persistence in
+SPEC-006. Keeping windows across restarts would turn a bounded in-memory
+counter into a small database for no diagnostic gain.
 
 ## Data structures
 
@@ -233,34 +302,77 @@ truncated:      per dimension, whether the cap was hit
 
 ## CLI impact
 
-Feeds `aadoctor top` (README §41). The `other` bucket and any truncation flag
-must be visible in that output.
+Implements `aadoctor top` (README §41), with `--window 1m|5m`, `--site NAME`
+and `--json`. The `other` volume is shown, and so is the snapshot's age: a
+snapshot from ten minutes ago describes ten minutes ago, and presenting it as
+current would be a lie the reader cannot catch.
 
 ## Persistence impact
 
-None while running. A window snapshot is copied into an incident when one is
-created.
+The aggregates themselves are never persisted; a restart starts empty.
+
+The daemon publishes a bounded snapshot to `/var/lib/aadoctor/runtime.json`
+once per poll, because `aadoctor top` runs in a different process and cannot
+see the daemon's memory. It is written atomically and is not world-readable,
+since it names sites, paths and client addresses. It holds aggregates only:
+never a log line, never a query string, never a referer, and not the user agent
+table - the longest and least diagnostic thing aggregation holds.
+
+A socket or an HTTP port would have been the other way to answer the CLI. One
+file, overwritten in place, needs no listener, no port, no protocol and no
+permissions model of its own.
 
 ---
 
 ## Acceptance criteria
 
-- [ ] 10 s, 1 min and 5 min windows are maintained and roll on time.
-- [ ] Counts per site, IP, path, status, method and user agent are correct on
-      fixtures.
-- [ ] Memory stays bounded when a fixture generates one million unique paths.
-- [ ] Displaced keys appear in `other`; truncation is flagged.
-- [ ] `/produto?id=N` collapses to one path key.
-- [ ] Timing metrics are absent, not zero, when the format lacks them.
-- [ ] Replaying the same fixture twice produces identical top-N, including tie
-      order.
+- [x] 1 min and 5 min windows are maintained and roll on time; 10 s is one
+      bucket.
+- [x] Counts per site, IP, path, status, method and user agent are correct.
+- [x] Memory stays bounded under a flood of unique paths and of unique IPs.
+- [x] Displaced volume appears in `other`; truncated keys are marked.
+- [x] `/produto?id=N` collapses to one path key.
+- [x] Timing metrics are absent, not zero - SPEC-004 does not parse them.
+- [x] Two snapshots of the same data are identical, including tie order.
+- [x] A flood of unique keys cannot push the dominant key out of the table.
+- [x] Per-site paths, IPs, statuses and error kinds are attributed correctly.
+- [x] A window empties on its own when no events arrive.
+- [x] `aadoctor top` shows the snapshot and how old it is.
 
 ## Verification
 
-- Fixtures: `normal-access.log`, `traffic-spike.log`, `one-ip-flood.log`,
-  `404-flood.log`, plus a generated high-cardinality file.
-- Memory assertion around the high-cardinality replay.
-- Determinism check: two replays, identical snapshots.
+`tests/test_traffic.py`, with the clock injected so windows and expiry are
+tested by moving time rather than by sleeping:
+
+- Counting by site, IP, path, status, status class, method and user agent;
+  missing fields; a request with no status; the query excluded from the key.
+- Errors by kind, level and site; an unclassified error counted as `other`.
+- Unparsed lines counted apart from requests, globally and per site.
+- One-minute and five-minute windows; data leaving each; a window that empties
+  after an hour of silence; requests per second; bucket boundaries.
+- Per-site paths, IPs, statuses and error kinds, with shares relative to the
+  right denominator.
+- Ties broken by key; two snapshots identical; a snapshot that cannot be used
+  to disturb the aggregator.
+- 50,000 unique paths and 20,000 unique IPs kept bounded; long paths and user
+  agents truncated and marked.
+- Heavy hitters: 10,000 one-off paths followed by the real one, noise
+  interleaved with it, and a dominant IP inside an IP flood - the dominant key
+  must still come first.
+- 100,000 events counted exactly, with memory tracking keys rather than
+  requests.
+- A realistic scenario - ordinary traffic, then a burst on one path from mostly
+  one address, with 502s and upstream timeouts - asserting every fact is
+  visible and that the snapshot names no cause.
+
+`tests/test_cli.py` covers `top`: totals, leaders, snapshot age, a stale
+snapshot, both windows, `--site`, `--json`, an empty window, and the warning
+shown when parser coverage is poor.
+
+Also exercised end to end against the real daemon in a container, on three
+sites with 9,500 requests: `top` showed the busiest site at 84.2%, its busiest
+path, the address behind most of it, 120 responses of 502 and 40 upstream
+timeouts - and `runtime.json` held 14 KB of aggregates with no log content.
 
 ## Out of scope
 

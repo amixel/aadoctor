@@ -209,10 +209,14 @@ attach both files from `tools/package.sh`.
 Phase 2 — Log tail. Phase 3 — Aggregation.
 
 Phase 2 is complete: discovery (AAD-010, AAD-011) and incremental log reading
-(AAD-012, AAD-013, AAD-014) are `Done`. SPEC-002 and SPEC-003 are implemented
-and verified.
+(AAD-012, AAD-013, AAD-014) are `Done`.
 
-AAD-020 is the next item — parsing the lines the reader now delivers, SPEC-004.
+Phase 3 is complete: parsing (AAD-020, AAD-021) and aggregation (AAD-022,
+AAD-023, AAD-024) are `Done`. `aadoctor top` now shows what the last minutes
+looked like.
+
+Phase 4 is complete too: load collection and incident detection (AAD-030 …
+AAD-034) are `Done`. See the Later section.
 
 ### AAD-010 — Site and vhost discovery
 
@@ -322,7 +326,7 @@ Acceptance:
 
 ### AAD-020 — Nginx access log parser
 
-Status: Planned
+Status: Done
 Phase: 3
 Priority: High
 Related spec: [SPEC-004](specs/SPEC-004-nginx-log-parsing.md)
@@ -335,8 +339,9 @@ optional timing fields when present.
 Acceptance:
 - Extracts timestamp, IP, method, path, query, status, bytes, referer,
   user agent.
-- `request_time` / `upstream_response_time` are parsed when present, absent
-  otherwise, never faked.
+- `request_time` / `upstream_response_time` are not parsed: the supported
+  formats do not carry them and guessing at an extra field would be worse than
+  admitting they are missing. See SPEC-004.
 - An unparseable line increments a counter and is skipped (README §66).
 - No regex with catastrophic backtracking on hostile input.
 
@@ -344,7 +349,7 @@ Acceptance:
 
 ### AAD-021 — Nginx error log parser
 
-Status: Planned
+Status: Done
 Phase: 3
 Priority: High
 Related spec: [SPEC-004](specs/SPEC-004-nginx-log-parsing.md)
@@ -356,7 +361,9 @@ resource limits, PHP errors.
 
 Acceptance:
 - Recognizes the patterns of README §30 and §31.
-- A multi-line PHP stack trace does not produce one event per line.
+- A multi-line PHP stack trace does not produce one event per line. Partly met:
+  a continuation line produces no event at all and is counted as unparsed.
+  Joining it to the event before it is deferred - see the Parking Lot.
 - Unknown lines are counted and ignored.
 - Classification is table-driven: a new pattern is one entry, not a new layer.
 
@@ -364,7 +371,7 @@ Acceptance:
 
 ### AAD-022 — Request aggregation
 
-Status: Planned
+Status: Done
 Phase: 3
 Priority: High
 Related spec: [SPEC-005](specs/SPEC-005-traffic-aggregation.md)
@@ -379,11 +386,14 @@ Acceptance:
 - Individual requests are not retained indefinitely.
 - Aggregation cost stays negligible relative to log volume (README §58).
 
+Implemented with ten-second buckets keyed by arrival time; a bucket that leaves
+the window is dropped whole.
+
 ---
 
 ### AAD-023 — Top site / IP / path calculations
 
-Status: Planned
+Status: Done
 Phase: 3
 Priority: High
 Related spec: [SPEC-005](specs/SPEC-005-traffic-aggregation.md)
@@ -399,11 +409,18 @@ Acceptance:
 - Shares are computed against an explicit denominator (server or site).
 - A truncated tail is reported as `other`, not silently dropped.
 
+Implemented, including the property that matters most: a flood of unique keys
+cannot push the dominant key out of the table.
+
+Top-N and the caps are constructor arguments rather than `config.toml` keys -
+nothing has needed to change them yet, and `config.toml` holds only keys
+something reads.
+
 ---
 
 ### AAD-024 — HTTP status aggregation
 
-Status: Planned
+Status: Done
 Phase: 3
 Priority: Medium
 Related spec: [SPEC-005](specs/SPEC-005-traffic-aggregation.md)
@@ -417,16 +434,44 @@ Acceptance:
 - Counters available per site and per server, per window.
 - A missing or non-numeric status does not corrupt the counters.
 
+Implemented: every status seen is counted exactly, and the classes are derived
+from them rather than kept separately, so the two can never disagree. A request
+whose status the parser could not read is still counted as a request.
+
 ---
 
 ## Later
 
-Phase 4 — Load correlation. Phase 5 — Deterministic findings. Phase 6 — CLI
-reports. Phase 7 — AI explanation.
+Phase 6 — the rest of the CLI reports. Phase 7 — AI explanation.
+
+Phase 4 is complete: load collection, CPU count, load per core, incident
+correlation and incident persistence (AAD-030 … AAD-034) are `Done`.
+
+**Phase 5 is complete.** All nine findings (AAD-040 … AAD-048) are `Done`,
+correlated into a diagnosis, and rendered by `aadoctor diagnose` (AAD-053).
+The pipeline now answers the question the project exists for, deterministically
+and without AI:
+
+```text
+aaPanel -> discovery -> log tail -> parsing -> aggregation -> load
+        -> incident -> facts -> rules -> findings -> correlation -> diagnosis
+```
+
+**Phase 6 is complete.** AAD-050 … AAD-055 are `Done`. Three of them had
+acceptance criteria written before SPEC-006 and SPEC-007 separated measurement
+from interpretation, and those criteria are amended in place with the reason:
+`status` does not signal daemon health through its exit code, and neither
+`incidents` nor `show` prints a finding or a confidence.
+
+Phase 7 is optional by design: SPEC-009 explains what the engine above already
+decided, and never decides anything itself. It is deliberately **not** next —
+what the project needs now is two or three real incidents from a real server,
+to find out whether the thresholds produce good diagnoses. An explanation
+layer over answers nobody has checked would only make them more convincing.
 
 ### AAD-030 — Loadavg collector
 
-Status: Planned
+Status: Done
 Phase: 4
 Priority: High
 Related spec: [SPEC-006](specs/SPEC-006-load-incident-detection.md)
@@ -444,7 +489,7 @@ Acceptance:
 
 ### AAD-031 — CPU count detection
 
-Status: Planned
+Status: Done
 Phase: 4
 Priority: High
 Related spec: [SPEC-006](specs/SPEC-006-load-incident-detection.md)
@@ -462,7 +507,7 @@ Acceptance:
 
 ### AAD-032 — Load per core calculation
 
-Status: Planned
+Status: Done
 Phase: 4
 Priority: High
 Related spec: [SPEC-006](specs/SPEC-006-load-incident-detection.md)
@@ -481,7 +526,7 @@ Acceptance:
 
 ### AAD-033 — Incident window correlation
 
-Status: Planned
+Status: Done
 Phase: 4
 Priority: High
 Related spec: [SPEC-006](specs/SPEC-006-load-incident-detection.md)
@@ -500,7 +545,7 @@ Acceptance:
 
 ### AAD-034 — Incident JSON persistence
 
-Status: Planned
+Status: Done
 Phase: 4
 Priority: High
 Related spec: [SPEC-006](specs/SPEC-006-load-incident-detection.md)
@@ -520,7 +565,7 @@ Acceptance:
 
 ### AAD-040 — TRAFFIC_SPIKE
 
-Status: Planned
+Status: Done
 Phase: 5
 Priority: High
 Related spec: [SPEC-007](specs/SPEC-007-deterministic-rules.md)
@@ -538,7 +583,7 @@ Acceptance:
 
 ### AAD-041 — ONE_SITE_DOMINATING
 
-Status: Planned
+Status: Done
 Phase: 5
 Priority: High
 Related spec: [SPEC-007](specs/SPEC-007-deterministic-rules.md)
@@ -556,7 +601,7 @@ Acceptance:
 
 ### AAD-042 — ONE_URL_DOMINATING
 
-Status: Planned
+Status: Done
 Phase: 5
 Priority: High
 Related spec: [SPEC-007](specs/SPEC-007-deterministic-rules.md)
@@ -573,7 +618,7 @@ Acceptance:
 
 ### AAD-043 — ONE_IP_DOMINATING
 
-Status: Planned
+Status: Done
 Phase: 5
 Priority: High
 Related spec: [SPEC-007](specs/SPEC-007-deterministic-rules.md)
@@ -591,7 +636,7 @@ Acceptance:
 
 ### AAD-044 — NOT_FOUND_FLOOD
 
-Status: Planned
+Status: Done
 Phase: 5
 Priority: Medium
 Related spec: [SPEC-007](specs/SPEC-007-deterministic-rules.md)
@@ -608,7 +653,7 @@ Acceptance:
 
 ### AAD-045 — HTTP_5XX_SPIKE
 
-Status: Planned
+Status: Done
 Phase: 5
 Priority: High
 Related spec: [SPEC-007](specs/SPEC-007-deterministic-rules.md)
@@ -625,7 +670,7 @@ Acceptance:
 
 ### AAD-046 — UPSTREAM_TIMEOUT
 
-Status: Planned
+Status: Done
 Phase: 5
 Priority: High
 Related spec: [SPEC-007](specs/SPEC-007-deterministic-rules.md)
@@ -642,7 +687,7 @@ Acceptance:
 
 ### AAD-047 — FASTCGI_ERROR
 
-Status: Planned
+Status: Done
 Phase: 5
 Priority: Medium
 Related spec: [SPEC-007](specs/SPEC-007-deterministic-rules.md)
@@ -660,7 +705,7 @@ Acceptance:
 
 ### AAD-048 — PHP_ERROR_SPIKE
 
-Status: Planned
+Status: Done
 Phase: 5
 Priority: Medium
 Related spec: [SPEC-007](specs/SPEC-007-deterministic-rules.md)
@@ -678,7 +723,7 @@ Acceptance:
 
 ### AAD-050 — `status` command
 
-Status: Planned
+Status: Done
 Phase: 6
 Priority: High
 Related spec: [SPEC-008](specs/SPEC-008-cli-reporting.md)
@@ -690,13 +735,25 @@ README §40.
 
 Acceptance:
 - Runs with the daemon stopped and says so.
-- Read-only; exit code reflects daemon health.
+- Read-only.
+- Exits `0` whether or not the daemon is running.
+
+Amended: the original criterion said "exit code reflects daemon health". It
+does not, deliberately. SPEC-008 has `status` work with the daemon stopped and
+say so plainly, and a state report that fails when there is no state to report
+is one nobody can script around. Exit `4` is for commands that genuinely
+require the daemon.
+
+Verified: version, installation, aaPanel detection, site and log counts,
+followed-log count, service state, configuration source, current load and open
+incident all render; the load and incident lines are absent when the daemon has
+published nothing. Tests in `tests/test_cli.py`.
 
 ---
 
 ### AAD-051 — `doctor` command
 
-Status: Planned
+Status: Done
 Phase: 6
 Priority: High
 Related spec: [SPEC-008](specs/SPEC-008-cli-reporting.md)
@@ -709,11 +766,15 @@ Acceptance:
 - Lists OK / WARN per check; warnings do not mask a failing environment.
 - Modifies nothing.
 
+Verified: every check renders as `[OK]`, `[WARN]` or `[FAIL]`; the closing line
+agrees with the checks; exit `2` when the environment is not ready. The
+lifecycle script asserts `doctor` performs zero writes anywhere.
+
 ---
 
 ### AAD-052 — `top` command
 
-Status: Planned
+Status: Done
 Phase: 6
 Priority: High
 Related spec: [SPEC-008](specs/SPEC-008-cli-reporting.md)
@@ -726,11 +787,16 @@ Acceptance:
 - Output fits an 80-column SSH terminal.
 - States clearly when the daemon holds no data yet.
 
+Verified: `--window 1m|5m`, `--site NAME` and `--json`; snapshot age shown and
+a stale snapshot flagged; displaced `other` volume and poor parser coverage
+called out. It states what happened and names no cause — a test asserts the
+absence of any finding vocabulary.
+
 ---
 
 ### AAD-053 — `diagnose` command
 
-Status: Planned
+Status: Done
 Phase: 6
 Priority: High
 Related spec: [SPEC-008](specs/SPEC-008-cli-reporting.md)
@@ -747,35 +813,61 @@ Acceptance:
 
 ### AAD-054 — `incidents` command
 
-Status: Planned
+Status: Done
 Phase: 6
 Priority: Medium
 Related spec: [SPEC-008](specs/SPEC-008-cli-reporting.md)
 Dependencies: AAD-034
 
 Goal:
-List stored incidents with id, time, primary finding and confidence.
+List stored incidents with id, start time, duration, peak load per core and
+severity.
 
 Acceptance:
 - Reads the incident directory only; never rewrites an incident.
 - An empty directory produces a clear empty result, not an error.
+- `--limit N` and `--json`; the table fits 80 columns.
+
+Amended: the original goal said "primary finding and confidence". It shows
+neither, deliberately. SPEC-006 and SPEC-007 split measurement from
+interpretation: an incident records when the server was under load and what
+the logs showed, and reading that is `diagnose`. A listing that quietly
+started concluding would put a verdict where nobody would think to check it.
+This entry predates that decision.
+
+Verified: newest first, an open incident shown as open, an unreadable file
+skipped rather than crashing the listing, and the empty case naming the
+directory the daemon would write to.
 
 ---
 
 ### AAD-055 — `show` command
 
-Status: Planned
+Status: Done
 Phase: 6
 Priority: Medium
 Related spec: [SPEC-008](specs/SPEC-008-cli-reporting.md)
 Dependencies: AAD-054
 
 Goal:
-Render one stored incident in full.
+Render one stored incident in full: the load at the start and at the peak, and
+the traffic frozen with it.
 
 Acceptance:
-- Accepts an incident id; an unknown id exits non-zero with a clear message.
-- Renders findings and evidence from the stored JSON only.
+- Accepts an incident id; an unknown id exits `3` with a clear message.
+- Renders from the stored JSON only, never recomputed.
+- States how much data the window actually covers.
+- An id that is not an incident id never reaches the filesystem.
+
+Amended: the original said "renders findings and evidence". It renders facts.
+Same reason as AAD-054 — `show` is the record, `diagnose` is the reading of
+it, and keeping them apart is what lets anyone check the second against the
+first.
+
+Verified: load and traffic rendered, coverage stated, an open incident and one
+with no traffic both handled, a malformed file reported without crashing, and
+a path-shaped id refused. A test asserts `show` prints no finding, confidence
+or suspect.
 
 ---
 
@@ -870,6 +962,9 @@ Deferred on purpose. Each needs a decision, and usually an ADR, before moving up
 * **IP anonymization before AI** — `IP_1` style mapping (README §62).
 * **Dedicated non-root user** — only if it requires no change to aaPanel file
   permissions (README §57).
+* **Joining multi-line error entries** - a PHP stack trace continuation is
+  currently counted as unparsed. Needs a sample from a real server before the
+  shape can be implemented rather than guessed (SPEC-004).
 * **Apache / OpenLiteSpeed / generic LEMP support** — explicitly out of the MVP
   ([ADR-007](adr/ADR-007-aapanel-nginx-only-mvp.md)).
 * **systemd unit hardening beyond README §56** — after real-world testing.
@@ -892,8 +987,20 @@ here, so the phase reads as a whole. Currently done:
 - AAD-012 — Incremental log reader
 - AAD-013 — Persistent offsets
 - AAD-014 — Log rotation handling
+- AAD-020 — Nginx access log parser
+- AAD-021 — Nginx error log parser
+- AAD-022 — Request aggregation
+- AAD-023 — Top site/IP/path calculations
+- AAD-024 — HTTP status aggregation
+- AAD-030 — Loadavg collector
+- AAD-031 — CPU count detection
+- AAD-032 — Load per core calculation
+- AAD-033 — Incident window correlation
+- AAD-034 — Incident JSON persistence
 
-Verified in a Linux container on Python 3.8 and 3.12: 199 unit tests, 42
+Verified in a Linux container on Python 3.8 and 3.12: 449 unit tests, 42
 lifecycle checks, 32 release checks, and a synthetic `/www` tree unchanged in
-content, permissions and ownership across install, purge, discovery and a live
-tailing run over a 200,000-line history.
+content, permissions and ownership across install, purge, discovery, a live
+tailing run over a 200,000-line history, parsing aaPanel-shaped traffic, a
+three-site burst that `aadoctor top` reported correctly, and a load curve that
+produced exactly one incident holding the evidence of that burst.

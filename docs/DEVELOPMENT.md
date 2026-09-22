@@ -66,6 +66,15 @@ one, update. Needs network on first run, to install `curl` in the image:
 docker run --rm -v "${PWD}:/work:ro" python:3.8-slim bash /work/tests/integration/release.sh
 ```
 
+SPEC-007 end to end against the real daemon — three scenarios, roughly four
+minutes each, driving a load curve and a traffic burst and then running
+`diagnose` on what the daemon wrote. Needs the tree writable, because it
+builds a synthetic `/www`:
+
+```powershell
+docker run --rm -v "${PWD}:/work" python:3.8-slim bash /work/tests/integration/diagnose.sh
+```
+
 The container has no systemd, so that script stubs `systemctl` and records every
 call. It proves which units aaDoctor acts on; it does not prove the unit starts.
 Confirming that still needs a host with real systemd.
@@ -108,11 +117,33 @@ python3 ./aadoctor --help
 python3 ./aadoctor doctor
 python3 ./aadoctor status
 python3 ./aadoctor sites
+python3 ./aadoctor top
+python3 ./aadoctor top --window 1m --site example.com
+python3 ./aadoctor top --json
+python3 ./aadoctor incidents
+python3 ./aadoctor show 2026-09-22T18-31-40
+python3 ./aadoctor diagnose
+python3 ./aadoctor diagnose 2026-09-22T18-31-40 --json
 python3 ./aadoctor daemon --verbose --log-file /tmp/aadoctor.log
 ```
 
 The daemon needs aaPanel to be present before it discovers or follows anything.
 On a machine without it, it starts, says so and idles.
+
+`top` reads `/var/lib/aadoctor/runtime.json`, which the daemon publishes once
+per poll. Without a daemon running there is nothing to read, and `top` says so
+rather than showing an empty table as if it were the truth.
+
+`incidents`, `show` and `diagnose` read `/var/lib/aadoctor/incidents/`. To
+exercise the load detector without waiting for a real spike, point the
+collector at a file you control - `aadoctor.collectors.load.LOADAVG_PATH` -
+and write load values into it. That is how the container verification drives a
+load curve.
+
+`show` and `diagnose` are deliberately different commands over the same file:
+`show` renders what was measured, `diagnose` renders a reading of it. If you
+are ever tempted to have `show` print a finding, that is the moment the tool
+stops being checkable.
 
 Discovery can read any directory, so it needs no aaPanel and no root:
 
@@ -154,14 +185,10 @@ python3 -m unittest discover -s tests -t tests
 
 ### Planned commands
 
-Not implemented, and deliberately not registered — running them is a usage
-error listing what does exist:
+Not implemented, and deliberately not registered — running it is a usage error
+listing what does exist:
 
 ```bash
-aadoctor top
-aadoctor diagnose
-aadoctor incidents
-aadoctor show <incident>
 aadoctor explain <incident>
 ```
 
@@ -205,7 +232,23 @@ They are written in aaPanel's style, with the brace on its own line. When a
 real `/www/server/panel/vhost/nginx` is available, compare it against these and
 add any shape that is missing — anonymized, as below.
 
-### Logs (SPEC-003 onwards)
+### Log lines (SPEC-004)
+
+Parser cases live as inline strings in `tests/test_parsers.py`, not as files: a
+parser that had to open a file would already have failed its own contract.
+
+### Incident records (SPEC-007)
+
+```text
+tests/_scenarios.py
+```
+
+Builders producing the incident shape SPEC-006 writes, including the three
+scenarios SPEC-007 names. The rules consume structured data and never reopen a
+log, so a fixture made of log lines would exercise SPEC-004 and SPEC-005 a
+second time and SPEC-007 not at all.
+
+### Log files (SPEC-005 onwards)
 
 Planned location:
 
@@ -247,9 +290,9 @@ Per phase, before an item is `Done`:
 |---|---|
 | 1 | Installer runs twice with the same end state; purge leaves no trace; `doctor` writes nothing |
 | 2 | Discovery finds sites from directives and survives a bad vhost; first sight of a log reads nothing; offsets survive restart; rotation and truncation resume correctly; no full-file reads |
-| 3 | Parser handles malformed lines without stopping; aggregation memory stays bounded |
-| 4 | Incident is created on a synthetic load trigger; no duplicate incidents during a sustained spike |
-| 5 | Each rule fires on its fixture and does not fire on `normal-access.log` |
+| 3 | Parser handles malformed lines without stopping and never raises on arbitrary text; aggregation memory stays bounded; a flood of unique keys cannot hide the dominant one |
+| 4 | Incident created on a synthetic load trigger; one incident per sustained spike, not one per poll; the peak snapshot holds the traffic, not the opening one |
+| 5 | Each rule fires on its fixture, at its threshold and not below it, and none fires on an evenly loaded server; a diagnosis can be inconclusive and says so; the same incident always yields the same answer |
 | 6 | Each command renders from stored data only and fits an 80-column terminal |
 | 7 | Everything above still passes with AI disabled, and with AI enabled but failing |
 

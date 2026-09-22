@@ -1,6 +1,10 @@
 # SPEC-006 — Load Incident Detection
 
-Status: Draft
+Status: Implemented
+
+Implemented in `src/aadoctor/collectors/load.py` and
+`src/aadoctor/analyzers/incidents.py`. See **Implementation notes** for the
+decisions this spec left open and the two it got wrong.
 
 Related: [README.md](../../README.md) §20, §21, §22, §36, §37, §63 ·
 [ADR-003](../adr/ADR-003-filesystem-state-without-database.md) ·
@@ -30,8 +34,8 @@ persist it as an incident.
 
 ## Current context
 
-Nothing is implemented. Inputs: `/proc/loadavg`, CPU count, and window
-snapshots from [SPEC-005](SPEC-005-traffic-aggregation.md).
+Inputs: `/proc/loadavg`, CPU count, and window snapshots from
+[SPEC-005](SPEC-005-traffic-aggregation.md).
 
 ---
 
@@ -80,11 +84,10 @@ On trigger:
 
 1. Record `started_at` and the system block.
 2. Freeze the 5-minute window snapshot ending at the trigger time.
-3. Hand the snapshot to the rules engine
-   ([SPEC-007](SPEC-007-deterministic-rules.md)).
-4. Create the incident if at least one finding is produced, or if load is
-   critical — a critical incident with no findings is itself useful information:
-   the cause is not visible in the web logs.
+3. Create the incident. Every trigger produces one: the rules engine that this
+   spec originally deferred to does not exist yet, and even once it does, an
+   incident with no finding is itself useful information - it says the cause is
+   not visible in the web logs.
 
 ### Analysis window
 
@@ -104,11 +107,13 @@ than centered on it.
 
 - While load stays above the trigger, the open incident is **extended**, not
   duplicated: `ended_at` advances and peak values update.
-- An incident closes when load falls below the trigger for a sustained period —
-  default 3 samples, configurable.
-- After an incident closes, a cooldown — default 300 s, configurable — suppresses
-  a new incident unless load reaches `critical_per_cpu`.
-- Extension may update findings and evidence; the incident id never changes.
+- An incident closes when load falls below `recovery_per_cpu` (default 0.75)
+  for a sustained period - default 3 samples, configurable. Closing on a lower
+  number than opening is what stops an incident flickering; see the
+  implementation notes.
+- No separate cooldown is implemented: the hysteresis above already prevents
+  the close-then-reopen cycle a cooldown would have absorbed.
+- The incident id never changes once assigned.
 
 ### Persistence
 
@@ -118,9 +123,14 @@ Incidents are written to:
 /var/lib/aadoctor/incidents/2026-09-22T12-41-20.json
 ```
 
-Shape follows README §37: `id`, `started_at`, `system`, `traffic`, `suspect`,
-`top_path`, `top_ip`, `errors`, `findings`. The schema may evolve before the
-first stable release; the version is recorded in the file so readers can adapt.
+The record holds `id`, `status`, `severity`, the lifecycle timestamps, a
+`system` block and a `traffic` block. It deliberately does **not** hold
+README §37's `suspect`, `top_path`, `top_ip` or `findings`: those are
+conclusions, and SPEC-007 adds them. The version is recorded in the file so a
+later reader can adapt.
+
+Writes happen on opening, on each new peak and on closing, so an incident that
+is still running survives a crash as a record rather than disappearing.
 
 Writes are atomic (temporary file plus rename). A partially written incident is
 never readable.
@@ -147,25 +157,79 @@ aaDoctor deletes **only its own files**. It never touches an aaPanel log
   `load_per_cpu` at the trigger, plus the peak values if the incident is
   extended.
 
+## Implementation notes
+
+Decisions taken while implementing this spec, including two places where the
+spec as written was wrong.
+
+**Hysteresis, not a cooldown.** The spec opened and closed on the same
+threshold and added a cooldown to absorb the flapping that causes. Two
+thresholds are simpler and better: an incident opens at `trigger_per_cpu` and
+closes at `recovery_per_cpu`, so a load sitting on 1.0 cannot open and close an
+incident every other poll. The cooldown was dropped.
+
+**Every trigger opens an incident.** The spec made incident creation depend on
+the rules engine producing a finding. That engine is SPEC-007 and does not
+exist, and the dependency was backwards anyway: what is recorded should not
+depend on what can currently be concluded from it.
+
+**Severity is `high` or `critical`.** The spec called the lower level
+`trigger`, which is not a severity. Both are a function of load per core and
+nothing else - severity says how hard the server was pressed, never by what.
+It rises and never falls: an incident that touched critical was a critical
+incident.
+
+**The traffic is frozen twice: at the opening and at each new peak.** This
+turned out to matter more than expected. Load lags the traffic that caused it,
+so at the moment an incident opens the burst may barely be visible - in the
+verification scenario the opening snapshot holds 4,500 requests and the peak
+snapshot 9,500, with the dominant path only in the second. Keeping just the
+opening snapshot would have thrown away the evidence the whole feature exists
+to preserve.
+
+**Windows say how much data they cover.** A snapshot taken forty seconds after
+the daemon started covers forty seconds, not five minutes. `coverage_seconds`
+was added to SPEC-005's snapshot for this, and `aadoctor show` prints it. The
+alternative - presenting a partial window as five minutes of evidence - would
+mislead exactly when it matters.
+
+**An interrupted incident is marked, not guessed at.** An incident still open
+when the daemon stops gets `status: interrupted` on the next start. Its end time
+is genuinely unknown; inventing one would put fiction in the file whose purpose
+is to be trustworthy.
+
+**Ids are second-resolution with a numeric suffix on collision.** The suffix is
+only reached when two incidents open in the same second, which needs a clock
+jump or a test.
+
+**Retention deletes only names that match an incident id.** Anything else in
+the directory - including `state.json` and `runtime.json`, which live one level
+up but could be copied in - is never considered. The sweep runs at startup and
+once a day, not on every poll.
+
+**Load monitoring can be switched off.** With `[load] enabled = false`,
+discovery, tailing, parsing, aggregation and `top` all continue; only the
+trigger goes away.
+
 ## Data structures
 
-Incident file, following README §37 with the additions noted:
+Incident file, as implemented:
 
 ```text
-id                 timestamp id, also the filename
 schema_version     integer
+id                 timestamp id, also the filename
+status             open | closed | interrupted
+severity           high | critical, from load alone
 started_at         ISO 8601 with offset
-ended_at           when the incident closed
-severity           trigger | critical
-system             cpu_count, load1, load5, load15, load_per_cpu, peaks
-traffic            total_requests, window_seconds
-suspect            site, requests, share
-top_path           path, requests
-top_ip             ip, requests
-errors             upstream_timeout, http_502, ...
-findings           list of { code, confidence, evidence }
-truncated          whether aggregation caps engaged in this window
+peak_at            when the highest load was seen
+ended_at           null while open
+duration_seconds   present once closed
+system             cpu_count, and a start and peak load block each
+traffic            start and peak, each holding the SPEC-005 windows
 ```
+
+Each traffic window carries its own `coverage_seconds` and `unparsed_ratio`, so
+a reader can tell how much data is actually behind the numbers.
 
 ## Edge cases
 
@@ -173,15 +237,17 @@ truncated          whether aggregation caps engaged in this window
 |---|---|
 | `/proc/loadavg` unreadable | Load correlation disabled with a warning; daemon continues |
 | CPU count detection fails | Fall back to 1, log it |
-| Load high, no traffic in the window | Incident created only if critical; findings empty; evidence states the logs show nothing |
+| Load high, no traffic in the window | Incident created; its snapshot shows no traffic, which is itself the answer |
 | Load high from a cron job or backup | Same as above; aaDoctor does not claim a web cause it cannot see |
 | Sustained 6-hour spike | One extended incident, not 2160 incidents |
-| Flapping load around the threshold | Sustained-sample requirement plus cooldown absorb it |
+| Flapping load around the threshold | Two thresholds plus the sustained-sample requirement absorb it |
 | Incident directory unwritable | Log and drop; no crash |
 | Disk full | Same; retention pass may free space on the next cycle |
 | Clock jump backwards | Incident ids may collide; a suffix disambiguates |
-| Daemon restart during an incident | The incident closes as written; a new one may open after restart |
-| Aggregation truncated in the window | Flag set on the incident so confidence can be capped |
+| Daemon restart during an incident | Marked `interrupted` on the next start; detection begins again |
+| Aggregation truncated in the window | The window carries its own `other` volume and `unparsed_ratio` |
+| Daemon started moments ago | `coverage_seconds` says how little data the window has |
+| `[load] enabled = false` | No load is read and no incident is created; everything else runs |
 
 ## Safety constraints
 
@@ -206,22 +272,50 @@ cooldown that prevents incident storms.
 
 ## Acceptance criteria
 
-- [ ] `load_per_cpu` is computed from `/proc/loadavg` and the detected CPU count.
-- [ ] A single spiking sample does not create an incident; a sustained one does.
-- [ ] A sustained spike produces one extended incident, not many.
-- [ ] Cooldown suppresses immediate re-triggering below critical.
-- [ ] The analysis window ends at the trigger and extends `window_seconds` back.
-- [ ] The incident file matches README §37 and is written atomically.
-- [ ] Retention deletes only aaDoctor incident files older than the limit.
-- [ ] Load alone is never reported as a diagnosis.
+- [x] `load_per_cpu` is computed from `/proc/loadavg` and the detected CPU count.
+- [x] A single spiking sample does not create an incident; a sustained one does.
+- [x] A sustained spike produces one incident, not many.
+- [x] Hysteresis suppresses the flapping a cooldown was meant to absorb.
+- [x] The window ends at the trigger and extends backwards, and says how much
+      of itself it covers.
+- [x] The incident file is written atomically, on open, on peak and on close.
+- [x] Retention deletes only aaDoctor incident files older than the limit.
+- [x] Load alone is never reported as a diagnosis: no incident record and no
+      command output names a cause.
 
 ## Verification
 
-- Replay a scripted load sequence (normal → spike → sustained → decay) against a
-  fixture traffic stream; assert incident count, extension and cooldown.
-- Kill the process mid-write; assert no unreadable incident file exists.
-- Set `retention_days = 0` on a fixture directory containing a non-aaDoctor file;
-  assert that file survives.
+`tests/test_load.py` and `tests/test_incidents.py`, with the clock and the
+loadavg path injected so no real `/proc` and no waiting are involved:
+
+- Load parsing: normal, high, integer and malformed lines; empty, missing and
+  unreadable files; negative values rejected; CPU count of None or zero.
+- Opening: quiet load, a single spike, a sustained one, the configured poll
+  count, the counter resetting, and startup with load already high.
+- Continuity: a continuous spike producing one incident; staying open between
+  the two thresholds; an explicit flapping sequence (1.10 / 0.95 / 1.05 / 0.90)
+  opening nothing.
+- Peaks: rising, kept when load falls back, severity rising to critical and
+  staying, and the peak time recorded.
+- Closing: after sustained recovery only, duration from the timestamps, a
+  second independent incident, and ids that do not collide within one second.
+- Snapshots: the opening one stored, the peak one replacing it, none taken
+  while nothing happens, and an incident recorded even without traffic data.
+- Persistence: written on open, peak and close; a write failure logged not
+  raised; a round trip; an interrupted incident marked on restart.
+- Reading: empty and missing directories, newest first, the limit, files that
+  are not incidents ignored, an unreadable one skipped, and an id containing a
+  path refused before it can reach the filesystem.
+- Retention: an old incident removed, a recent one kept, unknown files never
+  touched, and `retention_days = 0` removing nothing.
+
+The scenario this spec exists for, as an integration test and again against the
+real daemon in a container: three sites, ordinary traffic, then a burst on one
+path from mostly one address with 502s and upstream timeouts, while load runs
+0.5 → 2.9 → 0.4. The result is **one** incident, peak 2.9 per core, whose peak
+snapshot holds 8,000 requests for the busiest site, 5,000 for the busiest path,
+4,620 for the busiest address, 120 responses of 502 and 40 upstream timeouts -
+in a 16 KB file that names no cause.
 
 ## Out of scope
 

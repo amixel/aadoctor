@@ -29,6 +29,37 @@ except ImportError:  # pragma: no cover - depends on interpreter version
 DEFAULTS: Dict[str, Dict[str, Any]] = {
     "monitor": {"enabled": True, "interval_seconds": 10},
     "discovery": {"interval_seconds": 60},
+    "load": {
+        "enabled": True,
+        "trigger_per_cpu": 1.0,
+        "critical_per_cpu": 2.0,
+        "recovery_per_cpu": 0.75,
+        "trigger_polls": 2,
+        "recovery_polls": 3,
+    },
+    "incidents": {"retention_days": 30},
+    # Thresholds the deterministic rules fire on (SPEC-007). They live here
+    # rather than inside the rules so that nothing is hardcoded and an
+    # incident from a tuned server stays interpretable. Every one is an
+    # unvalidated starting point; most people should never touch them.
+    "rules": {
+        "min_volume": 100,
+        "site_share": 0.70,
+        "site_share_ceiling": 0.85,
+        "url_share": 0.50,
+        "url_share_ceiling": 0.75,
+        "ip_share": 0.50,
+        "ip_share_ceiling": 0.75,
+        "not_found_share": 0.30,
+        "not_found_min_rate": 5.0,
+        "http_5xx_share": 0.01,
+        "http_5xx_min_rate": 1.0,
+        "http_5xx_min_count": 10,
+        "upstream_timeout_min": 5,
+        "fastcgi_error_min": 5,
+        "php_error_min": 10,
+        "traffic_spike_factor": 3.0,
+    },
     "mysql": {"enabled": False},
     "ai": {"enabled": False},
 }
@@ -123,6 +154,10 @@ def _merge(parsed: Dict[str, Any]) -> Tuple[Dict[str, Dict[str, Any]], List[str]
                 data[section][key] = value
                 continue
             expected = type(DEFAULTS[section][key])
+            # An integer where a float is expected is fine and natural to
+            # write: rejecting `trigger_per_cpu = 1` would be pedantry.
+            if expected is float and isinstance(value, int) and not isinstance(value, bool):
+                value = float(value)
             if not isinstance(value, expected) or isinstance(value, bool) != (expected is bool):
                 raise ConfigError(
                     f"[{section}] {key} must be {expected.__name__}, got {type(value).__name__}"

@@ -28,6 +28,9 @@ CONFIG_FILE = CONFIG_DIR / "config.toml"
 VERSION_FILE = INSTALL_DIR / "VERSION"
 LOG_FILE = LOG_DIR / "aadoctor.log"
 STATE_FILE = STATE_DIR / "state.json"
+#: Published by the daemon for the CLI to read; metrics, not offsets, and the
+#: two are kept apart because they have different lifetimes and owners.
+RUNTIME_FILE = STATE_DIR / "runtime.json"
 OFFSETS_DIR = STATE_DIR / "offsets"
 INCIDENTS_DIR = STATE_DIR / "incidents"
 
