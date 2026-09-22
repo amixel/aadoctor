@@ -39,6 +39,7 @@ MVP commands:
 ```text
 doctor      validate the environment
 status      current state of aaDoctor and the server
+sites       the sites discovered in aaPanel
 top         current window's traffic leaders
 diagnose    current or most recent degradation, with evidence
 incidents   list stored incidents
@@ -57,10 +58,12 @@ explain     AI explanation of a stored incident (Phase 7, SPEC-009)
 
 A command that is not implemented is **not registered**: `aadoctor top` today
 is a usage error listing the commands that exist, not a stub printing "not
-implemented". Nothing may look implemented when it is not. As of 0.1.0-dev only
-`doctor`, `status`, `enable`, `disable`, `uninstall` and `daemon` are
-registered; `update` is absent because release downloads do not exist yet
-([SPEC-001](SPEC-001-installation-lifecycle.md)).
+implemented". Nothing may look implemented when it is not. As of 0.1.0-dev the
+registered commands are `doctor`, `status`, `sites`, `enable`, `disable`,
+`update`, `uninstall` and `daemon`.
+
+`update` takes `--version X.Y.Z` and `--force`, and delegates to `install.sh`
+in release mode ([SPEC-001](SPEC-001-installation-lifecycle.md)).
 
 Lifecycle commands (`enable`, `disable`, `update`, `uninstall`) behave per
 [SPEC-001](SPEC-001-installation-lifecycle.md); this spec covers only how they
@@ -109,6 +112,26 @@ window. Must also show:
   ([SPEC-005](SPEC-005-traffic-aggregation.md));
 - a clear statement when the daemon holds no data yet.
 
+### sites
+
+One row per discovered site, with the state of each log:
+
+```text
+SITE              ACCESS   ERROR
+example.com       yes      yes
+cliente.com.br    none     missing
+quiet.com         off      yes
+```
+
+`yes` the file is there, `missing` a path is configured but the file is not
+there, `none` nothing is configured, `off` logging is disabled, `?` the path is
+relative and was not resolved. `none` and `missing` are deliberately different
+answers ([SPEC-002](SPEC-002-aapanel-discovery.md)).
+
+`--vhost-dir PATH` reads another directory, which is how the command is tested
+without `/www`. `--json` prints the full records, including every
+`server_name`, the source file and per-site warnings.
+
 ### diagnose
 
 Per README §42: the evidence-first report — load context, probable responsible
@@ -140,8 +163,9 @@ An unknown id exits non-zero with a message naming what was searched.
 - Color, if used at all, is additive; output must be unambiguous piped to a file.
 - No spinners, no progress animation, no cursor manipulation.
 - Errors go to stderr; data goes to stdout.
-- Machine-readable output (`--json`) is **TBD**: desirable for `incidents` and
-  `show`, but not before a human-readable version exists.
+- Machine-readable output: `sites --json` exists, added alongside its
+  human-readable form. `incidents --json` and `show --json` should follow the
+  same shape when those commands land — human-readable first, never instead.
 
 ### Exit codes
 

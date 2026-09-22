@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
+import tempfile
 import unittest
 
 import _support  # noqa: F401  (sys.path bootstrap)
@@ -54,12 +56,21 @@ class Usage(unittest.TestCase):
         code, out, _ = run(["--help"])
 
         self.assertEqual(code, 0)
-        for command in ("doctor", "status", "enable", "disable", "uninstall", "daemon"):
+        for command in (
+            "doctor",
+            "status",
+            "sites",
+            "enable",
+            "disable",
+            "update",
+            "uninstall",
+            "daemon",
+        ):
             self.assertIn(command, out)
 
     def test_planned_commands_are_not_pretending_to_exist(self):
         # SPEC-008 plans these; none is implemented, so none is registered.
-        for command in ("top", "diagnose", "incidents", "show", "explain", "update"):
+        for command in ("top", "diagnose", "incidents", "show", "explain"):
             code, _, _ = run([command])
             self.assertEqual(code, cli.EXIT_USAGE, command)
 
@@ -90,7 +101,7 @@ class Status(unittest.TestCase):
         self.assertEqual(code, cli.EXIT_OK)
         self.assertIn(__version__, out)
         self.assertIn("Service:", out)
-        # Monitoring is not implemented; status must say so rather than invent
+        # Parsing is not implemented; status must say so rather than invent
         # numbers (README.md section 40).
         self.assertIn("not implemented", out)
 
@@ -100,6 +111,69 @@ class Status(unittest.TestCase):
         lowered = out.lower()
         for absent in ("requests", "incident", "load/core", "top ip"):
             self.assertNotIn(absent, lowered)
+
+
+class Sites(unittest.TestCase):
+    """`aadoctor sites` renders what discovery found (SPEC-002)."""
+
+    FIXTURES = str(_support.ROOT / "tests" / "fixtures" / "vhosts")
+
+    def test_table_lists_the_discovered_sites(self):
+        code, out, _ = run(["sites", "--vhost-dir", self.FIXTURES])
+
+        self.assertEqual(code, cli.EXIT_OK)
+        self.assertIn("SITE", out)
+        self.assertIn("example.com", out)
+        self.assertIn("secure.com", out)
+
+    def test_table_fits_eighty_columns(self):
+        _, out, _ = run(["sites", "--vhost-dir", self.FIXTURES])
+
+        for line in out.splitlines():
+            self.assertLessEqual(len(line), 80, line)
+
+    def test_a_disabled_access_log_is_shown_as_off(self):
+        _, out, _ = run(["sites", "--vhost-dir", self.FIXTURES])
+
+        row = [line for line in out.splitlines() if line.startswith("quiet.com")][0]
+        self.assertIn("off", row)
+
+    def test_nothing_configured_reads_differently_from_file_not_there(self):
+        """'none' and 'missing' must not be confusable."""
+        _, out, _ = run(["sites", "--vhost-dir", self.FIXTURES])
+        rows = {line.split()[0]: line for line in out.splitlines() if line}
+
+        # no-access.conf declares no access_log at all.
+        self.assertIn("none", rows["no-access.com"])
+        # commented.conf declares one; the file does not exist in the fixtures.
+        self.assertIn("missing", rows["commented.com"])
+
+    def test_json_output_is_valid_and_carries_the_paths(self):
+        code, out, _ = run(["sites", "--json", "--vhost-dir", self.FIXTURES])
+        data = json.loads(out)
+
+        self.assertEqual(code, cli.EXIT_OK)
+        names = [site["name"] for site in data["sites"]]
+        self.assertIn("example.com", names)
+
+        site = [s for s in data["sites"] if s["name"] == "formatted.com"][0]
+        self.assertEqual(site["access_log"]["path"], "/www/wwwlogs/formatted.com.log")
+        self.assertEqual(site["access_log"]["log_format"], "main")
+
+    def test_an_empty_directory_is_not_an_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, out, _ = run(["sites", "--vhost-dir", tmp])
+
+        self.assertEqual(code, cli.EXIT_OK)
+        self.assertIn("No sites found", out)
+
+    def test_sites_writes_nothing(self):
+        directory = _support.ROOT / "tests" / "fixtures" / "vhosts"
+        before = sorted((p.name, p.stat().st_mtime) for p in directory.iterdir())
+        run(["sites", "--vhost-dir", self.FIXTURES])
+        after = sorted((p.name, p.stat().st_mtime) for p in directory.iterdir())
+
+        self.assertEqual(before, after)
 
 
 class Privileges(unittest.TestCase):

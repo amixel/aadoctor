@@ -1,16 +1,17 @@
 # SPEC-001 — Installation Lifecycle
 
-Status: In Progress
+Status: Implemented
 
 Related: [README.md](../../README.md) §5, §12, §45–§56 ·
 [ADR-004](../adr/ADR-004-systemd-daemon-lifecycle.md) ·
 [ADR-008](../adr/ADR-008-minimum-python-version.md) ·
-Backlog: AAD-001, AAD-002, AAD-004, AAD-005, AAD-006
+Backlog: AAD-001, AAD-002, AAD-004, AAD-005, AAD-006, AAD-007
 
-Implemented: local installation, configuration handling, `enable` / `disable`,
-`uninstall` and `--purge`, the service unit and a minimal daemon.
-Not implemented: release download, SHA256 verification and `aadoctor update`,
-because no release has been published yet. See **Implementation notes** below.
+Every requirement below is implemented and verified in a Linux container. Two
+things a container cannot prove, and which remain open: the unit has never been
+loaded by real systemd, and no release has been published yet, so
+`resolve_latest_version` has only been exercised against a repository with no
+releases (where it correctly refuses to guess). See **Implementation notes**.
 
 ---
 
@@ -252,10 +253,36 @@ Creates `/etc/aadoctor/` and `/var/lib/aadoctor/` including `offsets/` and
 Decisions taken while implementing this spec. They extend it; they do not
 replace anything above.
 
-**Installed contents.** `/opt/aadoctor/` also holds `uninstall.sh`, which the
-layout above does not list. `aadoctor uninstall` delegates to it so that every
-`rm` lives in exactly one place, and so removal still works when the Python
-installation is the thing that is broken.
+**Installed contents.** `/opt/aadoctor/` also holds `uninstall.sh` and
+`install.sh`, which the layout above does not list. `aadoctor uninstall` and
+`aadoctor update` delegate to them, so every `rm` and every download lives in
+exactly one place, and both keep working when the Python installation is the
+thing that is broken.
+
+**Update is install.** `aadoctor update` runs `install.sh --release`. There is
+no separate update implementation: fetching a verified release, replacing
+`/opt/aadoctor`, preserving configuration and state and restarting the service
+only when it was running is one sequence, written once.
+
+**Release layout.** Artifacts are fetched from
+`https://github.com/amixel/aadoctor/releases/download/v<version>/`, built by
+`tools/package.sh`, which also writes the `.sha256`. The tarball is built
+deterministically (sorted entries, fixed timestamps, numeric root ownership) so
+the same checkout always produces the same checksum. `AADOCTOR_BASE_URL`
+overrides the base for a mirror or a local test server, and a non-HTTPS override
+prints a warning.
+
+**Latest version resolution.** `/releases/latest` redirects to
+`/releases/tag/<tag>`, so the tag is read from the effective URL rather than
+through the GitHub API — no JSON parsing, no rate limit. If it cannot be
+resolved, the installer aborts and says to publish a release, pass `--version`,
+or install from a checkout. It never guesses a version.
+
+**Bytecode never travels.** `src/` is copied through `tar --exclude=__pycache__`
+rather than `cp -a`, so a developer checkout's stale bytecode cannot reach an
+installation, and `tools/package.sh` strips it from release artifacts. Bytecode
+that Python writes in `/opt/aadoctor` at runtime is normal and is removed with
+the directory.
 
 **Interpreter in the unit file.** README §56 hardcodes `/usr/bin/python3`. The
 shipped unit keeps that line, and `install.sh` rewrites `ExecStart` with the
@@ -267,15 +294,18 @@ and stops. Starting monitoring is an explicit `aadoctor enable`, matching the
 three-command flow in README §45. An upgrade restarts `aadoctor.service` only
 if it was already running.
 
-**Release mode is not implemented.** Steps 6 and 7 of the install sequence —
-download and SHA256 verification — have no implementation, because no release
-exists to download and inventing a URL would be worse than an honest error.
-`install.sh` runs from a checkout or an unpacked release archive and aborts with
-a clear message otherwise. `aadoctor update` is not registered as a command.
+**Mode selection.** `install.sh` installs from the checkout next to it when that
+checkout is complete, and fetches a release otherwise. `--release` forces the
+release path, `--version X` pins one, `--force` reinstalls a version that is
+already installed. Without `--force`, installing the version already present
+prints a message and exits 0 without touching anything.
 
-**Staging paths.** Installation stages into `/opt/.aadoctor.stage` and keeps the
-outgoing version in `/opt/.aadoctor.previous` until the swap succeeds. Both are
-literal constants inside the installer's removal allowlist.
+**Staging paths.** Installation stages into `/opt/.aadoctor.stage`, downloads
+into `/opt/.aadoctor.download` and keeps the outgoing version in
+`/opt/.aadoctor.previous` until the swap succeeds. All three are literal
+constants inside the installer's removal allowlist, so there is still exactly
+one `rm` site in the script. An EXIT trap removes the download directory on
+every path, including failure.
 
 **Insufficient privileges exit code.** Commands that need root exit `5`. The
 code was added to the table in [SPEC-008](SPEC-008-cli-reporting.md).
@@ -285,9 +315,8 @@ version reads (`[monitor]`, `[mysql]`, `[ai]`), not the full set in README §14.
 Keys arrive with the phase that uses them; because an existing configuration is
 never overwritten, older files keep working through the built-in defaults.
 
-**No LICENSE file yet.** README §11 and the layout above list one. Choosing a
-licence is the project owner's decision, so none was invented; `install.sh`
-copies `LICENSE` only if it is present.
+**Licence.** MIT, `LICENSE` at the repository root, included in release
+artifacts and installed to `/opt/aadoctor/LICENSE`.
 
 ---
 
@@ -306,14 +335,21 @@ copies `LICENSE` only if it is present.
 
 ## Verification
 
-On a disposable Linux VM with aaPanel + Nginx:
+Automated, in a disposable Linux container — see
+[DEVELOPMENT.md](../DEVELOPMENT.md):
 
-1. Snapshot `/www/`, the crontab, and the firewall rules.
-2. Install, install again, upgrade, enable, disable, uninstall, purge.
-3. Re-snapshot and diff. The diff must be empty apart from aaDoctor's own paths
-   being absent.
-4. Repeat the install with a deliberately corrupted checksum file and confirm
-   the abort happens before extraction.
+- `tests/integration/lifecycle.sh` — 42 checks: install, idempotency,
+  configuration preservation, enable, disable, uninstall, purge, repeat purge,
+  a synthetic `/www` tree unchanged in content, permissions and ownership, every
+  `systemctl` call recorded, and an abort on an incomplete source.
+- `tests/integration/release.sh` — 32 checks: reproducible artifact build,
+  install from a served release, no-op on the same version, `--force`, a
+  corrupted artifact rejected with the installation left intact, a missing
+  release, `aadoctor update`, and the real repository with no releases yet.
+
+Still required on a host with real systemd, which a container cannot provide:
+install, `aadoctor enable`, confirm the unit is active, `aadoctor disable`,
+`aadoctor uninstall --purge`.
 
 ## Out of scope
 

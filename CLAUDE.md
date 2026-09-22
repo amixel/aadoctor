@@ -91,6 +91,14 @@ update STATUS when appropriate
 update BACKLOG if task state changed
 ```
 
+**Verification is not optional, and this project can always run it.** The
+development workstation is Windows with no Python interpreter, but Docker
+Desktop is available: run the tests, the CLI and the full install/uninstall
+lifecycle in a disposable Linux container. The exact commands are in
+[DEVELOPMENT.md](docs/DEVELOPMENT.md) under "Verifying from a Windows
+workstation". Never report work as verified on the strength of a code review
+alone, and never run `install.sh`, `enable` or `uninstall` against the host.
+
 Finish with:
 
 ```text
@@ -255,5 +263,5 @@ Do not duplicate content across documents.
 | [adr/](docs/adr/) | decisions and their consequences |
 | [BACKLOG.md](docs/BACKLOG.md) | work items and their state |
 | [STATUS.md](docs/STATUS.md) | where the project is right now |
-| [CHANGELOG.md](docs/CHANGELOG.md) | what actually changed |
+| [CHANGELOG.md](CHANGELOG.md) | what actually changed |
 | /CLAUDE.md (repository root) | how agents work here |

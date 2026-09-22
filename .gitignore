@@ -1,0 +1,16 @@
+# Python bytecode. Generated whenever the code runs, including inside the
+# verification containers.
+__pycache__/
+*.py[cod]
+
+# Local virtual environments, if anyone creates one. aaDoctor itself needs none
+# (ADR-002).
+.venv/
+venv/
+
+# Release artifacts built by tools/package.sh
+dist/
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db

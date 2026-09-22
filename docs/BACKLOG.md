@@ -30,17 +30,18 @@ Rules for agents working this backlog are in [/CLAUDE.md](../CLAUDE.md).
 
 ## Current
 
-Phase 1 — Foundation. AAD-001 … AAD-006 are implemented; none is `Done`, because
-the development machine has no Python interpreter and no Linux host, so nothing
-has been executed yet. Running the verification in
-[DEVELOPMENT.md](DEVELOPMENT.md) on a Linux host is what moves them to `Done`.
+Phase 1 — Foundation, complete except for one check that needs real systemd.
 
-AAD-007 carries the part of installation that could not be built: there is no
-release to download.
+AAD-001, AAD-002, AAD-003, AAD-005, AAD-006 and AAD-007 are `Done`: implemented
+and verified in a Linux container — 70 unit tests on Python 3.8 and 3.12, 42
+lifecycle checks and 32 release checks (see [DEVELOPMENT.md](DEVELOPMENT.md)).
+
+AAD-004 stays `Implemented`: a container has no init system, so the unit has
+never been loaded by real systemd.
 
 ### AAD-001 — Project skeleton
 
-Status: Implemented
+Status: Done
 Phase: 1
 Priority: High
 Related spec: [SPEC-001](specs/SPEC-001-installation-lifecycle.md)
@@ -61,7 +62,7 @@ Acceptance:
 
 ### AAD-002 — Configuration loading
 
-Status: Implemented
+Status: Done
 Phase: 1
 Priority: High
 Related spec: [SPEC-001](specs/SPEC-001-installation-lifecycle.md)
@@ -72,7 +73,9 @@ Load `/etc/aadoctor/config.toml` with the defaults of README §14, falling back
 to built-in defaults when the file or a key is absent.
 
 Acceptance:
-- `config.example.toml` matches README §14 section by section.
+- `config.example.toml` matches the built-in defaults exactly. It ships only the
+  keys this version reads, not the full set in README §14; the rest arrive with
+  the phase that uses them.
 - A missing config file yields defaults, not a crash.
 - A malformed config produces a clear error naming file and key; the daemon does
   not start with a half-applied configuration.
@@ -83,7 +86,7 @@ Acceptance:
 
 ### AAD-003 — aaPanel environment detection
 
-Status: Implemented
+Status: Done
 Phase: 1
 Priority: High
 Related spec: [SPEC-002](specs/SPEC-002-aapanel-discovery.md)
@@ -119,11 +122,15 @@ Acceptance:
 - After `disable`, no aaDoctor process remains running.
 - Only `aadoctor.service` is ever touched; no other unit is restarted.
 
+Remaining for `Done`: the unit has only ever been exercised against a stubbed
+`systemctl`. On a host with real systemd, confirm that it loads, starts, keeps
+running, restarts on failure and stops cleanly on `disable`.
+
 ---
 
 ### AAD-005 — Idempotent installation
 
-Status: Implemented
+Status: Done
 Phase: 1
 Priority: High
 Related spec: [SPEC-001](specs/SPEC-001-installation-lifecycle.md)
@@ -141,15 +148,13 @@ Acceptance:
 - Nothing is written under `/www/`.
 - Installing does not enable or start the service.
 
-Download and SHA256 verification (README §49 steps 6 and 7) moved to AAD-007:
-there is no published release to fetch, and inventing a URL would be worse than
-an explicit error.
+Download and SHA256 verification (README §49 steps 6 and 7) live in AAD-007.
 
 ---
 
 ### AAD-006 — Clean uninstall and purge
 
-Status: Implemented
+Status: Done
 Phase: 1
 Priority: High
 Related spec: [SPEC-001](specs/SPEC-001-installation-lifecycle.md)
@@ -169,7 +174,7 @@ Acceptance:
 
 ### AAD-007 — Release packaging, checksum verification and update
 
-Status: Planned
+Status: Done
 Phase: 1
 Priority: Medium
 Related spec: [SPEC-001](specs/SPEC-001-installation-lifecycle.md)
@@ -189,7 +194,13 @@ Acceptance:
   restarts only `aadoctor.service`, only if it was running.
 - No `git` requirement on the server.
 
-Blocked until a release is actually published; no URL is invented before then.
+Verified with a locally built and served release: reproducible artifact, checksum
+verified before extraction, corrupted artifact rejected with the installation
+left intact, missing release reported clearly, and the real repository — which
+has no releases yet — correctly refusing to guess a version.
+
+One step remains for the first real release: tag `v<version>` on GitHub and
+attach both files from `tools/package.sh`.
 
 ---
 
@@ -197,9 +208,15 @@ Blocked until a release is actually published; no URL is invented before then.
 
 Phase 2 — Log tail. Phase 3 — Aggregation.
 
+Phase 2 is complete: discovery (AAD-010, AAD-011) and incremental log reading
+(AAD-012, AAD-013, AAD-014) are `Done`. SPEC-002 and SPEC-003 are implemented
+and verified.
+
+AAD-020 is the next item — parsing the lines the reader now delivers, SPEC-004.
+
 ### AAD-010 — Site and vhost discovery
 
-Status: Planned
+Status: Done
 Phase: 2
 Priority: High
 Related spec: [SPEC-002](specs/SPEC-002-aapanel-discovery.md)
@@ -216,11 +233,13 @@ Acceptance:
   daemon restart.
 - Vhost files are opened read-only.
 
+Implemented in `src/aadoctor/discovery/`. The daemon re-runs discovery every
+`[discovery] interval_seconds` and logs only what changed.
 ---
 
 ### AAD-011 — Access and error log mapping
 
-Status: Planned
+Status: Done
 Phase: 2
 Priority: High
 Related spec: [SPEC-002](specs/SPEC-002-aapanel-discovery.md)
@@ -237,11 +256,14 @@ Acceptance:
 - `access_log off;` is recognized and produces no bogus path.
 - A missing or unreadable log file is a per-site warning only.
 
+Implemented: paths come from the directives, `off` and `/dev/null` are recorded
+as disabled, and "configured" is tracked separately from "the file exists".
+
 ---
 
 ### AAD-012 — Incremental log reader
 
-Status: Planned
+Status: Done
 Phase: 2
 Priority: High
 Related spec: [SPEC-003](specs/SPEC-003-incremental-log-monitoring.md)
@@ -261,7 +283,7 @@ Acceptance:
 
 ### AAD-013 — Persistent offsets
 
-Status: Planned
+Status: Done
 Phase: 2
 Priority: High
 Related spec: [SPEC-003](specs/SPEC-003-incremental-log-monitoring.md)
@@ -281,7 +303,7 @@ Acceptance:
 
 ### AAD-014 — Log rotation handling
 
-Status: Planned
+Status: Done
 Phase: 2
 Priority: High
 Related spec: [SPEC-003](specs/SPEC-003-incremental-log-monitoring.md)
@@ -856,6 +878,22 @@ Deferred on purpose. Each needs a decision, and usually an ADR, before moving up
 
 ## Done
 
-Nothing yet. AAD-001 … AAD-006 are `Implemented` and move here once they have
-been executed on a Linux host - see the verification table in
-[DEVELOPMENT.md](DEVELOPMENT.md).
+Items stay in their phase section with `Status: Done` rather than being moved
+here, so the phase reads as a whole. Currently done:
+
+- AAD-001 — Project skeleton
+- AAD-002 — Configuration loading
+- AAD-003 — aaPanel environment detection
+- AAD-005 — Idempotent installation
+- AAD-006 — Clean uninstall and purge
+- AAD-007 — Release packaging, checksum verification and update
+- AAD-010 — Site and vhost discovery
+- AAD-011 — Access and error log mapping
+- AAD-012 — Incremental log reader
+- AAD-013 — Persistent offsets
+- AAD-014 — Log rotation handling
+
+Verified in a Linux container on Python 3.8 and 3.12: 199 unit tests, 42
+lifecycle checks, 32 release checks, and a synthetic `/www` tree unchanged in
+content, permissions and ownership across install, purge, discovery and a live
+tailing run over a 200,000-line history.

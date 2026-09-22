@@ -14,8 +14,16 @@
 #   aadoctor enable
 #
 # Usage:
-#   ./install.sh            install or upgrade from this checkout
+#   ./install.sh                  install from this checkout, or from the
+#                                 latest published release if there is none
+#   ./install.sh --release        always fetch a release, ignoring local files
+#   ./install.sh --version 0.1.0  install that exact release
+#   ./install.sh --force          reinstall even if that version is installed
 #   ./install.sh --help
+#
+# A release is verified against its published SHA256 before anything on disk is
+# replaced. AADOCTOR_BASE_URL overrides where releases are fetched from, for a
+# mirror or a local test server.
 #
 set -euo pipefail
 
@@ -26,6 +34,7 @@ set -euo pipefail
 readonly INSTALL_DIR="/opt/aadoctor"
 readonly STAGE_DIR="/opt/.aadoctor.stage"
 readonly PREVIOUS_DIR="/opt/.aadoctor.previous"
+readonly DOWNLOAD_DIR="/opt/.aadoctor.download"
 readonly CONFIG_DIR="/etc/aadoctor"
 readonly CONFIG_FILE="/etc/aadoctor/config.toml"
 readonly STATE_DIR="/var/lib/aadoctor"
@@ -35,6 +44,9 @@ readonly CLI_PATH="/usr/local/bin/aadoctor"
 readonly UNIT_PATH="/etc/systemd/system/aadoctor.service"
 readonly SERVICE_NAME="aadoctor.service"
 
+# Everything a complete source tree must provide.
+readonly REQUIRED_CONTENTS="src/aadoctor aadoctor VERSION install.sh uninstall.sh config.example.toml systemd/aadoctor.service"
+
 # Read-only detection targets. Never written to.
 readonly AAPANEL_DIR="/www/server/panel"
 readonly NGINX_VHOST_DIR="/www/server/panel/vhost/nginx"
@@ -42,10 +54,23 @@ readonly NGINX_VHOST_DIR="/www/server/panel/vhost/nginx"
 readonly MIN_PYTHON_MAJOR=3
 readonly MIN_PYTHON_MINOR=8
 
-SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly SOURCE_DIR
+# Where releases live. Overridable for a mirror or a local test server.
+readonly RELEASES_LATEST_URL="https://github.com/amixel/aadoctor/releases/latest"
+readonly DEFAULT_BASE_URL="https://github.com/amixel/aadoctor/releases/download"
+BASE_URL="${AADOCTOR_BASE_URL:-${DEFAULT_BASE_URL}}"
+readonly BASE_URL
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+
+# What we install from: the checkout next to this script, or, in release mode,
+# the verified archive extracted under DOWNLOAD_DIR.
+SOURCE_DIR="${SCRIPT_DIR}"
 
 SERVICE_WAS_ACTIVE=0
+FORCE_RELEASE=0
+FORCE_REINSTALL=0
+REQUESTED_VERSION=""
 
 # --- output --------------------------------------------------------------
 
@@ -55,29 +80,43 @@ warn()  { printf '[WARN] %s\n' "$*" >&2; }
 fail()  { printf '[FAIL] %s\n' "$*" >&2; exit 1; }
 
 usage() {
-    sed -n '3,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '3,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # Removal guard: only aaDoctor's own installation directories, by exact match.
 remove_install_path() {
     local target="${1:-}"
     case "${target}" in
-        "${INSTALL_DIR}"|"${STAGE_DIR}"|"${PREVIOUS_DIR}") ;;
+        "${INSTALL_DIR}"|"${STAGE_DIR}"|"${PREVIOUS_DIR}"|"${DOWNLOAD_DIR}") ;;
         *) fail "refusing to remove unexpected path: ${target:-<empty>}" ;;
     esac
     [ -e "${target}" ] || return 0
     rm -rf -- "${target}"
 }
 
+# A failed or finished run never leaves a downloaded archive behind.
+cleanup() {
+    remove_install_path "${DOWNLOAD_DIR}"
+}
+
 # --- checks --------------------------------------------------------------
 
 check_arguments() {
-    if [ "$#" -gt 0 ]; then
+    while [ "$#" -gt 0 ]; do
         case "$1" in
+            --release) FORCE_RELEASE=1 ;;
+            --force)   FORCE_REINSTALL=1 ;;
+            --version)
+                shift
+                [ "$#" -gt 0 ] || fail "--version needs a value, for example 0.1.0"
+                REQUESTED_VERSION="$1"
+                FORCE_RELEASE=1
+                ;;
             -h|--help) usage; exit 0 ;;
             *) fail "unknown option: $1" ;;
         esac
-    fi
+        shift
+    done
 }
 
 check_root() {
@@ -114,17 +153,120 @@ check_systemd() {
     ok "systemd detected"
 }
 
-check_source() {
-    local required="src/aadoctor aadoctor VERSION uninstall.sh systemd/aadoctor.service"
+# tar is needed by every install: it is how src/ is copied without bytecode.
+check_tar() {
+    command -v tar >/dev/null 2>&1 || fail "tar not found; it is required to install aaDoctor"
+    ok "tar detected"
+}
+
+check_download_tools() {
+    local tool
+    for tool in curl sha256sum; do
+        command -v "${tool}" >/dev/null 2>&1 \
+            || fail "${tool} not found; it is required to install a published release"
+    done
+}
+
+source_is_complete() {
+    local dir="${1:-}"
     local item
 
-    for item in ${required}; do
-        if [ ! -e "${SOURCE_DIR}/${item}" ]; then
-            fail "this installer must run from a complete aaDoctor checkout or release archive (missing ${item}).
-Downloading a published release is not implemented yet - see SPEC-001."
-        fi
+    for item in ${REQUIRED_CONTENTS}; do
+        [ -e "${dir}/${item}" ] || return 1
     done
-    ok "installing from ${SOURCE_DIR}"
+    return 0
+}
+
+installed_version() {
+    if [ -f "${INSTALL_DIR}/VERSION" ]; then
+        tr -d '[:space:]' < "${INSTALL_DIR}/VERSION"
+    fi
+}
+
+# GitHub redirects /releases/latest to /releases/tag/<tag>, so the tag can be
+# read from the effective URL without parsing JSON or spending an API call.
+resolve_latest_version() {
+    local effective
+    effective="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "${RELEASES_LATEST_URL}" 2>/dev/null)" \
+        || return 1
+
+    case "${effective}" in
+        */releases/tag/v*) printf '%s\n' "${effective##*/releases/tag/v}" ;;
+        */releases/tag/*)  printf '%s\n' "${effective##*/releases/tag/}" ;;
+        *) return 1 ;;
+    esac
+}
+
+skip_if_already_installed() {
+    local target="${1}"
+    local current
+    current="$(installed_version)"
+
+    if [ -n "${current}" ] && [ "${current}" = "${target}" ] && [ "${FORCE_REINSTALL}" -eq 0 ]; then
+        info ""
+        info "aaDoctor ${current} is already installed. Nothing to do."
+        info "Use --force to reinstall it."
+        exit 0
+    fi
+}
+
+fetch_release() {
+    local version="${1}"
+    local artifact="aadoctor-${version}.tar.gz"
+    local base="${BASE_URL}/v${version}"
+    local curl_args=(-fsSL)
+
+    case "${BASE_URL}" in
+        https://*) curl_args+=(--proto '=https' --tlsv1.2) ;;
+        *) warn "fetching over a non-HTTPS URL: ${BASE_URL}" ;;
+    esac
+
+    remove_install_path "${DOWNLOAD_DIR}"
+    mkdir -p "${DOWNLOAD_DIR}"
+    chmod 0700 "${DOWNLOAD_DIR}"
+
+    info "downloading ${base}/${artifact}"
+    curl "${curl_args[@]}" -o "${DOWNLOAD_DIR}/${artifact}" "${base}/${artifact}" \
+        || fail "could not download ${base}/${artifact}"
+    curl "${curl_args[@]}" -o "${DOWNLOAD_DIR}/${artifact}.sha256" "${base}/${artifact}.sha256" \
+        || fail "could not download the checksum for ${artifact}"
+
+    # Verified before anything on disk is touched. A mismatch aborts here, and
+    # the EXIT trap removes the download.
+    if ! ( cd "${DOWNLOAD_DIR}" && sha256sum -c --status "${artifact}.sha256" ); then
+        fail "SHA256 mismatch for ${artifact}. Nothing was installed."
+    fi
+    ok "SHA256 verified"
+
+    tar -xzf "${DOWNLOAD_DIR}/${artifact}" -C "${DOWNLOAD_DIR}" \
+        || fail "could not extract ${artifact}"
+}
+
+# Decide what we install from: the checkout next to this script, or a verified
+# release archive.
+prepare_source() {
+    if [ "${FORCE_RELEASE}" -eq 0 ] && source_is_complete "${SCRIPT_DIR}"; then
+        SOURCE_DIR="${SCRIPT_DIR}"
+        ok "installing from ${SOURCE_DIR}"
+        return 0
+    fi
+
+    check_download_tools
+
+    local version="${REQUESTED_VERSION}"
+    if [ -z "${version}" ]; then
+        version="$(resolve_latest_version)" || fail "could not determine the latest release from ${RELEASES_LATEST_URL}.
+Publish a release first, pass --version, or run this installer from a complete checkout."
+    fi
+
+    skip_if_already_installed "${version}"
+    fetch_release "${version}"
+
+    SOURCE_DIR="${DOWNLOAD_DIR}/aadoctor-${version}"
+    source_is_complete "${SOURCE_DIR}" \
+        || fail "the release archive for ${version} is incomplete. Nothing was installed."
+
+    ok "installing aaDoctor ${version} from the verified release"
 }
 
 # Detection only. aaDoctor is installed either way; it simply will not monitor
@@ -156,16 +298,21 @@ stage_files() {
     remove_install_path "${STAGE_DIR}"
     mkdir -p "${STAGE_DIR}"
 
-    cp -a "${SOURCE_DIR}/src" "${STAGE_DIR}/src"
+    # Copied through tar so that bytecode left by a local run never reaches the
+    # installation. cp -a would carry __pycache__ along.
+    tar -c --exclude='__pycache__' -C "${SOURCE_DIR}" src | tar -x -C "${STAGE_DIR}"
+
     cp -a "${SOURCE_DIR}/aadoctor" "${STAGE_DIR}/aadoctor"
     cp -a "${SOURCE_DIR}/VERSION" "${STAGE_DIR}/VERSION"
     cp -a "${SOURCE_DIR}/uninstall.sh" "${STAGE_DIR}/uninstall.sh"
+    # Installed so that 'aadoctor update' has something to run.
+    cp -a "${SOURCE_DIR}/install.sh" "${STAGE_DIR}/install.sh"
 
     if [ -f "${SOURCE_DIR}/LICENSE" ]; then
         cp -a "${SOURCE_DIR}/LICENSE" "${STAGE_DIR}/LICENSE"
     fi
 
-    chmod 0755 "${STAGE_DIR}/aadoctor" "${STAGE_DIR}/uninstall.sh"
+    chmod 0755 "${STAGE_DIR}/aadoctor" "${STAGE_DIR}/uninstall.sh" "${STAGE_DIR}/install.sh"
     chmod 0755 "${STAGE_DIR}"
     ok "files staged"
 }
@@ -226,7 +373,7 @@ install_unit() {
 }
 
 remember_service_state() {
-    if systemctl is-active --quiet "${SERVICE_NAME}" 2>/dev/null; then
+    if systemctl is-active --quiet "${SERVICE_NAME}" >/dev/null 2>&1; then
         SERVICE_WAS_ACTIVE=1
     fi
 }
@@ -256,6 +403,7 @@ next_steps() {
 
 main() {
     check_arguments "$@"
+    trap cleanup EXIT
 
     info "aaDoctor installer"
     info ""
@@ -264,7 +412,8 @@ main() {
     check_linux
     check_python
     check_systemd
-    check_source
+    check_tar
+    prepare_source
     check_aapanel
 
     remember_service_state

@@ -80,6 +80,11 @@ rm -rf /src
 cp -a "${SOURCE_DIR}" /src
 cd /src
 
+# A developer checkout usually carries bytecode from a local run. It must not
+# be carried into the installation.
+mkdir -p /src/src/aadoctor/__pycache__
+echo 'stale' > /src/src/aadoctor/__pycache__/paths.cpython-38.pyc
+
 echo
 echo "=== 1. first install ==="
 bash ./install.sh
@@ -98,6 +103,9 @@ check "unit installed"              present /etc/systemd/system/aadoctor.service
 check "staging dir cleaned up"      absent  /opt/.aadoctor.stage
 check "previous dir cleaned up"     absent  /opt/.aadoctor.previous
 check "install did not enable the unit" absent /tmp/unit-enabled
+# Checked before the CLI runs: Python writes bytecode on first import, which is
+# fine. The installer must not copy the checkout's stale bytecode in.
+check "checkout bytecode not installed" absent /opt/aadoctor/src/aadoctor/__pycache__
 
 echo "--- installed unit ---"
 cat /etc/systemd/system/aadoctor.service
@@ -111,12 +119,18 @@ check "CLI runs from /usr/local/bin" /usr/local/bin/aadoctor --version
 
 echo
 echo "=== 3. idempotency ==="
-find /opt/aadoctor /etc/aadoctor /var/lib/aadoctor /usr/local/bin/aadoctor \
-     /etc/systemd/system/aadoctor.service | sort > /tmp/state.1
+# Bytecode is pruned: Python writes it on first import, so it is runtime state,
+# not something the installer put there.
+snapshot() {
+    find /opt/aadoctor /etc/aadoctor /var/lib/aadoctor /usr/local/bin/aadoctor \
+         /etc/systemd/system/aadoctor.service \
+         -name '__pycache__' -prune -o -print | sort
+}
+
+snapshot > /tmp/state.1
 bash ./install.sh > /tmp/install.2.log 2>&1
 echo "exit: $?"
-find /opt/aadoctor /etc/aadoctor /var/lib/aadoctor /usr/local/bin/aadoctor \
-     /etc/systemd/system/aadoctor.service | sort > /tmp/state.2
+snapshot > /tmp/state.2
 check "second install yields the same file set" diff -q /tmp/state.1 /tmp/state.2
 
 echo

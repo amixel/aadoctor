@@ -1,11 +1,15 @@
 # SPEC-002 — aaPanel Discovery
 
-Status: Draft
+Status: Implemented
 
 Related: [README.md](../../README.md) §15, §16, §39, §65, §80, §81 ·
 [ADR-001](../adr/ADR-001-non-invasive-read-only-architecture.md) ·
 [ADR-007](../adr/ADR-007-aapanel-nginx-only-mvp.md) ·
 Backlog: AAD-003, AAD-010, AAD-011
+
+Implemented in `src/aadoctor/discovery/`, verified against fixtures and a
+synthetic aaPanel tree. See **Implementation notes** for the decisions this
+spec did not settle in advance.
 
 ---
 
@@ -35,7 +39,7 @@ from the aaPanel Nginx vhost configuration.
 
 ## Current context
 
-Nothing is implemented. Expected paths (README §15):
+Expected paths (README §15):
 
 ```text
 /www/server/panel/              aaPanel installation
@@ -97,8 +101,9 @@ Rules:
 - An `access_log` with a `log_format` argument is accepted; the format name is
   recorded when present, since [SPEC-004](SPEC-004-nginx-log-parsing.md) may
   need it.
-- Relative paths are resolved against the Nginx prefix when it can be
-  determined; otherwise the site is reported with an unresolved path warning.
+- Relative paths are **not** resolved: the Nginx prefix is not guessed at. The
+  log is recorded as `unresolved`, with the raw value kept and a warning
+  raised. See the note below.
 - Commented lines are ignored.
 - `server_name _;` or a missing `server_name` yields a site keyed by the vhost
   filename, marked as unnamed.
@@ -149,20 +154,98 @@ Counts of found / monitored / ignored sites are exposed to `doctor` and
 - Discovery results are held in memory; only the derived log offsets are
   persisted.
 
+## Implementation notes
+
+Decisions taken while implementing this spec. They extend it; nothing above is
+replaced except the relative-path rule, which is marked in place.
+
+**Statement-based parsing, not line-based.** Nginx statements end at `;`, not
+at a line break, so a block body is split on `;` with `{` and `}` treated as
+boundaries too. A whole vhost written on one line parses the same as an
+indented one, a `server_name` continued across two lines is still one
+directive, and a nested `location` block cannot glue itself to the directive
+before it.
+
+**Finding `server` blocks.** A single left-to-right scan tracks brace depth and
+the word that opened each brace. aaPanel writes the brace on its own line:
+
+```nginx
+server
+{
+    ...
+}
+```
+
+so matching a literal `server {` would find nothing.
+
+**Merging blocks within one file.** Blocks that share a `server_name` are one
+site — the common case being an HTTP block redirecting to an HTTPS one. A block
+with no name of its own joins the first group, because one aaPanel file
+describes one site. Blocks with different names stay apart: merging two real
+sites would be worse than reporting two.
+
+**Log precedence.** Ranked `configured` > `disabled` > `unresolved` > `absent`;
+the first block that offers the better state wins. A second `access_log` with a
+different path is ignored and reported, rather than merged under an invented
+rule.
+
+**`off` disables both directives.** `access_log off` is documented Nginx.
+`error_log off` is not consistent across Nginx versions and may produce a file
+literally named `off`; either way there is no log worth following, so both are
+recorded as `disabled`. `/dev/null` is treated the same way.
+
+**Relative paths are not resolved.** No Nginx prefix is guessed. The value is
+kept as `unresolved` with a warning. **TBD:** resolve against the prefix if a
+real aaPanel install is ever found using relative log paths — no evidence of
+one so far.
+
+**`include` is not followed.** A site with no log directive in its own file,
+that contains an `include`, is warned about explicitly rather than guessed at.
+
+**Missing semicolons are reported.** A log format, severity or buffer spec never
+contains a slash. One that does means a missing `;` swallowed the next
+directive, so the path is trusted and everything after it is discarded with a
+warning. Unbalanced braces are reported the same way, and what could be read is
+still returned.
+
+**Canonical name.** The first `server_name` that is not `_`, a wildcard, a
+regular expression or a variable. A vhost with none is named after its file
+stem and marked `unnamed` — `0.default.conf` becomes `0.default`.
+
+**Duplicates across files are never merged.** Two vhosts claiming the same name
+produce two sites and one warning.
+
+**Which files are read.** Regular files ending in `.conf`. A `.conf` file with
+no `server` block yields no site and no warning: aaPanel keeps helper snippets
+in the same directory.
+
 ## Data structures
 
-In-memory site record:
+In-memory site record, as implemented:
 
 ```text
-name            primary server_name
-aliases         remaining server_name values
-vhost_path      source file
-access_log      path or None
-error_log       path or None
-log_format      name when declared, else None
-status          monitored | ignored
-reason          when ignored
+name             canonical server_name, or the file stem
+server_names     every name declared, in order, deduplicated
+aliases          server_names minus the canonical one
+config_path      source file
+access / error   LogTarget
+unnamed          True when named after its file
+warnings         per-site, human-readable
 ```
+
+`LogTarget`:
+
+```text
+state        configured | disabled | unresolved | absent
+path         Path when configured, else None
+raw          the literal token, kept for debugging
+log_format   access_log's format argument when declared
+exists       whether the file is on disk (None when not checked)
+readable     whether it can be opened (None when not checked)
+```
+
+Configured and existing are separate questions: a site whose log has not been
+written yet is still a valid site.
 
 ## Edge cases
 
@@ -188,7 +271,10 @@ ignored — the fix is the administrator's decision, not aaDoctor's.
 
 ## CLI impact
 
-Feeds `doctor` (README §39) and the site counts in `status` (README §40).
+Feeds `doctor` (README §39) and the site counts in `status` (README §40), and
+adds `aadoctor sites` — a table of site, access log and error log, with
+`--json` for machine use and `--vhost-dir` to read a directory other than
+aaPanel's. See [SPEC-008](SPEC-008-cli-reporting.md).
 
 ## Persistence impact
 
@@ -199,23 +285,33 @@ None directly. Discovery output drives which files
 
 ## Acceptance criteria
 
-- [ ] Sites and log paths are derived from vhost directives, not filenames.
-- [ ] A new aaPanel site is monitored within one discovery interval, without a
+- [x] Sites and log paths are derived from vhost directives, not filenames.
+- [x] A new aaPanel site appears within one discovery interval, without a
       restart.
-- [ ] A malformed or unreadable vhost does not stop discovery.
-- [ ] Absent aaPanel and absent Nginx produce the exact messages above and start
-      no monitoring.
-- [ ] `doctor` reports found / monitored / ignored counts with reasons.
-- [ ] A filesystem audit after a discovery run shows no write under `/www/`.
+- [x] A malformed or unreadable vhost does not stop discovery.
+- [x] Absent aaPanel and absent Nginx are reported and start no monitoring.
+- [x] `doctor` reports site and log counts, with the reasons behind them.
+- [x] A filesystem audit after a discovery run shows no write under `/www/`.
 
 ## Verification
 
-- Fixture vhost directory covering: normal site, multiple `server_name`,
-  `access_log off`, custom log path, malformed file, unreadable file, missing
-  `server_name`.
-- Add and remove a fixture vhost while the discovery loop runs; confirm the site
-  set converges within one interval.
-- Run discovery against a read-only mounted fixture tree to prove no writes.
+Automated, in a disposable Linux container:
+
+- `tests/test_discovery.py` — 12 committed vhost fixtures plus temporary
+  directories: normal site, several `server_name`, commented directives,
+  `access_log off`, `/dev/null`, log format argument, error severity, absent
+  directives, relative path, duplicate directives, HTTP/HTTPS block pairs,
+  catch-all naming, helper file with no `server` block, unreadable file,
+  parser failure, duplicate names across files, configured-but-absent log
+  files, deterministic ordering, and mtimes unchanged after a pass.
+- `tests/test_cli.py` — the `sites` table and its JSON form.
+- A synthetic `/www/server/panel/vhost/nginx` tree driven through `doctor`,
+  `status`, `sites` and the daemon: a vhost added while the daemon ran was
+  picked up on the next pass and logged, and removing it was logged too.
+  Checksums and permissions under `/www` were identical before and after.
+
+Not yet verified: a real aaPanel installation. The fixtures follow aaPanel's
+formatting conventions but were written by hand.
 
 ## Out of scope
 

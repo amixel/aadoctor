@@ -12,6 +12,16 @@
 # Master switch for the daemon's monitoring work.
 enabled = true
 
+# How often the daemon reads the new bytes of each log it follows. Only new
+# content is read, never the file from the start (README.md section 17).
+interval_seconds = 10
+
+[discovery]
+# How often the daemon re-reads the aaPanel vhost files, so that a site added
+# in aaPanel is picked up without restarting aaDoctor (README.md section 16).
+# Read-only: aaDoctor never writes to the vhost directory.
+interval_seconds = 60
+
 # MySQL monitoring is not implemented and is not a dependency of aaDoctor.
 # Many servers use a remote database (README.md section 8).
 [mysql]

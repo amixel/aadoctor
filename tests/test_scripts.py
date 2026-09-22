@@ -14,7 +14,15 @@ import unittest
 
 import _support  # noqa: F401  (sys.path bootstrap)
 
+#: Scripts that run on a server. Held to the full safety rules below.
 SCRIPTS = ("install.sh", "uninstall.sh")
+
+#: Also syntax-checked, but it only ever runs from a checkout.
+ALL_SCRIPTS = SCRIPTS + (
+    "tools/package.sh",
+    "tests/integration/lifecycle.sh",
+    "tests/integration/release.sh",
+)
 
 #: Commands that could modify something. Used to prove /www is only read.
 MUTATORS = (
@@ -58,7 +66,7 @@ class Syntax(unittest.TestCase):
     @unittest.skipIf(shutil.which("bash") is None, "bash not available")
     def test_scripts_parse(self):
         bash = shutil.which("bash")
-        for name in SCRIPTS:
+        for name in ALL_SCRIPTS:
             result = subprocess.run(
                 [bash, "-n", str(_support.ROOT / name)],
                 stdout=subprocess.PIPE,
@@ -164,6 +172,7 @@ class RemovalSafety(unittest.TestCase):
             "/opt/aadoctor",
             "/opt/.aadoctor.stage",
             "/opt/.aadoctor.previous",
+            "/opt/.aadoctor.download",
             "/etc/aadoctor",
             "/etc/aadoctor/config.toml",
             "/var/lib/aadoctor",
@@ -215,6 +224,55 @@ class Install(unittest.TestCase):
         text = read("install.sh")
         self.assertIn('mv "${INSTALL_DIR}" "${PREVIOUS_DIR}"', text)
         self.assertIn('mv "${STAGE_DIR}" "${INSTALL_DIR}"', text)
+
+
+class Release(unittest.TestCase):
+    """AAD-007: fetching and verifying a published release."""
+
+    def test_checksum_is_verified_before_extraction(self):
+        """The order matters: a bad archive must never be unpacked."""
+        text = read("install.sh")
+
+        self.assertLess(
+            text.index("sha256sum -c"),
+            text.index("tar -xzf"),
+            "the archive is extracted before its checksum is verified",
+        )
+
+    def test_downloads_come_from_the_project_repository(self):
+        text = read("install.sh")
+
+        self.assertIn(
+            'readonly DEFAULT_BASE_URL="https://github.com/amixel/aadoctor/releases/download"',
+            text,
+        )
+        self.assertIn(
+            'readonly RELEASES_LATEST_URL="https://github.com/amixel/aadoctor/releases/latest"',
+            text,
+        )
+
+    def test_every_hardcoded_url_uses_https(self):
+        declared = re.compile(r'^readonly [A-Z_]+="(https?://[^"]*)"$')
+
+        for name in SCRIPTS:
+            for number, line in code_lines(read(name)):
+                match = declared.match(line.strip())
+                if not match:
+                    continue
+                self.assertTrue(
+                    match.group(1).startswith("https://"),
+                    f"{name}:{number} uses a plain-HTTP URL",
+                )
+
+    def test_a_failed_download_cannot_leave_an_archive_behind(self):
+        text = read("install.sh")
+
+        self.assertIn("trap cleanup EXIT", text)
+        self.assertIn('remove_install_path "${DOWNLOAD_DIR}"', text)
+
+    def test_checksum_mismatch_reports_that_nothing_was_installed(self):
+        self.assertIn("SHA256 mismatch", read("install.sh"))
+        self.assertIn("Nothing was installed.", read("install.sh"))
 
 
 if __name__ == "__main__":

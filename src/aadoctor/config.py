@@ -27,7 +27,8 @@ except ImportError:  # pragma: no cover - depends on interpreter version
 
 #: Built-in defaults. The shipped config.example.toml mirrors this exactly.
 DEFAULTS: Dict[str, Dict[str, Any]] = {
-    "monitor": {"enabled": True},
+    "monitor": {"enabled": True, "interval_seconds": 10},
+    "discovery": {"interval_seconds": 60},
     "mysql": {"enabled": False},
     "ai": {"enabled": False},
 }

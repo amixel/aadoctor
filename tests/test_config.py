@@ -26,6 +26,20 @@ class Defaults(unittest.TestCase):
         self.assertFalse(config.DEFAULTS["mysql"]["enabled"])
         self.assertFalse(config.DEFAULTS["ai"]["enabled"])
 
+    def test_discovery_interval_has_a_sane_default(self):
+        """README section 16: rediscovery every 60 seconds."""
+        with tempfile.TemporaryDirectory() as tmp:
+            loaded = config.load(Path(tmp) / "absent.toml")
+
+        self.assertEqual(loaded.get("discovery", "interval_seconds"), 60)
+
+    def test_discovery_interval_must_be_a_number(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config.toml"
+            target.write_text('[discovery]\ninterval_seconds = "fast"\n', encoding="utf-8")
+            with self.assertRaises(config.ConfigError):
+                config.load(target)
+
     def test_shipped_example_matches_the_built_in_defaults(self):
         example = _support.ROOT / "config.example.toml"
         loaded = config.load(example)

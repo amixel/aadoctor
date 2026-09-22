@@ -9,19 +9,21 @@ not. See SPEC-008 for the full intended surface.
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from pathlib import Path
 from typing import List, Optional, Sequence
 
 from . import __version__
-from . import environment, service
+from . import discovery, environment, service, storage
 from .config import ConfigError, load as load_config
 from .paths import (
     CONFIG_FILE,
     DISPLAY_NAME,
     INSTALL_DIR,
     SERVICE_NAME,
+    STATE_FILE,
     distribution_root,
 )
 
@@ -33,6 +35,7 @@ EXIT_NOT_FOUND = 3
 EXIT_DAEMON_NOT_RUNNING = 4
 EXIT_PRIVILEGES = 5
 
+INSTALL_SCRIPT = "install.sh"
 UNINSTALL_SCRIPT = "uninstall.sh"
 
 
@@ -60,8 +63,29 @@ def build_parser() -> argparse.ArgumentParser:
 
     commands.add_parser("doctor", help="check the environment (read-only)")
     commands.add_parser("status", help="show aaDoctor and service state")
+
+    sites = commands.add_parser("sites", help="list the sites discovered in aaPanel")
+    sites.add_argument("--json", action="store_true", help="machine-readable output")
+    sites.add_argument(
+        "--vhost-dir",
+        metavar="PATH",
+        help="read vhosts from another directory instead of aaPanel's",
+    )
+
     commands.add_parser("enable", help=f"enable and start {SERVICE_NAME}")
     commands.add_parser("disable", help=f"stop and disable {SERVICE_NAME}")
+
+    update = commands.add_parser("update", help="install a newer published release")
+    update.add_argument(
+        "--version",
+        metavar="X.Y.Z",
+        help="install this exact release instead of the latest",
+    )
+    update.add_argument(
+        "--force",
+        action="store_true",
+        help="reinstall even if that version is already installed",
+    )
 
     uninstall = commands.add_parser("uninstall", help="remove aaDoctor from this server")
     uninstall.add_argument(
@@ -98,8 +122,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     handlers = {
         "doctor": cmd_doctor,
         "status": cmd_status,
+        "sites": cmd_sites,
         "enable": cmd_enable,
         "disable": cmd_disable,
+        "update": cmd_update,
         "uninstall": cmd_uninstall,
         "daemon": cmd_daemon,
     }
@@ -109,8 +135,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 # --- commands ------------------------------------------------------------
 
 
+#: Warnings shown by doctor before the list is cut short.
+MAX_WARNINGS = 10
+
+
 def cmd_doctor(_args: argparse.Namespace) -> int:
-    """Report the environment. Reads only; fixes nothing."""
+    """Report the environment and what was discovered. Reads only."""
     print(f"{DISPLAY_NAME} environment check")
     print()
 
@@ -121,10 +151,13 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
 
     print()
 
-    config_status = _config_report()
-    for line in config_status:
+    for line in _config_report():
         print(line)
     print()
+
+    vhost_dir = environment.nginx_vhost_dir()
+    if vhost_dir.is_dir():
+        _print_discovery_report(discovery.discover_sites())
 
     if environment.ready(checks):
         print("Environment ready.")
@@ -132,6 +165,30 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
 
     print("Environment not ready. No changes were made.")
     return EXIT_ENV_NOT_READY
+
+
+def _print_discovery_report(result: "discovery.DiscoveryResult") -> None:
+    """Site counts and what is wrong with them, from the real vhost files."""
+    print(f"Sites found:       {result.site_count}")
+    print(f"Access logs:       {result.count_access(discovery.LOG_CONFIGURED)} configured")
+    print(f"Error logs:        {result.count_error(discovery.LOG_CONFIGURED)} configured")
+
+    missing = result.missing_files
+    if missing:
+        print(f"Configured logs not on disk: {len(missing)}")
+
+    warnings = list(result.all_warnings)
+    warnings += [f"{name}: configured log does not exist ({path})" for name, path in missing]
+
+    if warnings:
+        print()
+        print("Warnings:")
+        for text in warnings[:MAX_WARNINGS]:
+            print(f"- {text}")
+        if len(warnings) > MAX_WARNINGS:
+            print(f"- ... and {len(warnings) - MAX_WARNINGS} more")
+
+    print()
 
 
 def _config_report() -> List[str]:
@@ -165,6 +222,21 @@ def cmd_status(_args: argparse.Namespace) -> int:
     print("detected" if environment.has_aapanel() else "not detected")
     print()
 
+    if environment.nginx_vhost_dir().is_dir():
+        result = discovery.discover_sites()
+        print("Sites:")
+        print(result.site_count)
+        print()
+        print("Access logs:")
+        print(result.count_access(discovery.LOG_CONFIGURED))
+        print()
+        print("Error logs:")
+        print(result.count_error(discovery.LOG_CONFIGURED))
+        print()
+        print("Logs being followed:")
+        print(_followed_count(result))
+        print()
+
     print("Service:")
     print(_service_state())
     print()
@@ -179,9 +251,108 @@ def cmd_status(_args: argparse.Namespace) -> int:
     print()
 
     print("Monitoring:")
-    print("not implemented")
+    print("following logs; parsing not implemented yet")
 
     return EXIT_OK
+
+
+def cmd_sites(args: argparse.Namespace) -> int:
+    """List what discovery found. Read-only, and wide enough for SSH."""
+    vhost_dir = Path(args.vhost_dir) if args.vhost_dir else None
+    result = discovery.discover_sites(vhost_dir)
+
+    if args.json:
+        print(json.dumps(_sites_as_data(result), indent=2, sort_keys=True))
+        return EXIT_OK
+
+    if not result.sites:
+        print(f"No sites found in {result.vhost_dir}")
+        for text in result.warnings:
+            print(f"- {text}", file=sys.stderr)
+        return EXIT_OK
+
+    rows = [
+        (site.name, _log_cell(site.access), _log_cell(site.error))
+        for site in result.sites
+    ]
+
+    name_width = max([len(row[0]) for row in rows] + [len("SITE")])
+    access_width = max([len(row[1]) for row in rows] + [len("ACCESS")])
+
+    print(f"{'SITE'.ljust(name_width)}  {'ACCESS'.ljust(access_width)}  ERROR")
+    for name, access, error in rows:
+        print(f"{name.ljust(name_width)}  {access.ljust(access_width)}  {error}")
+
+    warnings = result.all_warnings
+    if warnings:
+        print()
+        print(f"{len(warnings)} warning(s); run 'aadoctor doctor' for details")
+
+    return EXIT_OK
+
+
+def _log_cell(target: "discovery.LogTarget") -> str:
+    """One word per log, so the table stays readable at 80 columns.
+
+    'none' and 'missing' are different answers: nothing is configured, versus
+    a path is configured but the file is not there yet.
+    """
+    if target.state != discovery.LOG_CONFIGURED:
+        return {
+            discovery.LOG_DISABLED: "off",
+            discovery.LOG_UNRESOLVED: "?",
+        }.get(target.state, "none")
+    return "missing" if target.exists is False else "yes"
+
+
+def _sites_as_data(result: "discovery.DiscoveryResult") -> dict:
+    return {
+        "vhost_dir": str(result.vhost_dir),
+        "warnings": result.all_warnings,
+        "sites": [
+            {
+                "name": site.name,
+                "server_names": site.server_names,
+                "config_path": str(site.config_path),
+                "unnamed": site.unnamed,
+                "access_log": _target_as_data(site.access),
+                "error_log": _target_as_data(site.error),
+                "warnings": site.warnings,
+            }
+            for site in result.sites
+        ],
+    }
+
+
+def _target_as_data(target: "discovery.LogTarget") -> dict:
+    return {
+        "state": target.state,
+        "path": str(target.path) if target.path else None,
+        "log_format": target.log_format,
+        "exists": target.exists,
+    }
+
+
+def _followed_count(result: "discovery.DiscoveryResult") -> str:
+    """How many log files the daemon holds a position in.
+
+    Counted from the state the daemon actually wrote, not guessed from the
+    configuration. When that state cannot be read - it is root-owned - the
+    number of distinct configured log files is reported instead, and labelled
+    as such rather than passed off as live monitoring.
+    """
+    distinct = {
+        str(target.path)
+        for site in result.sites
+        for target in (site.access, site.error)
+        if target.configured and target.path is not None
+    }
+
+    state = storage.read_json(STATE_FILE)
+    if isinstance(state, dict) and isinstance(state.get("files"), dict):
+        return f"{len(state['files'])} (from {STATE_FILE})"
+
+    return f"{len(distinct)} configured; the daemon has not recorded any offsets yet"
 
 
 def _service_state() -> str:
@@ -230,38 +401,55 @@ def _lifecycle(action: str, call, success_message: str) -> int:
     return EXIT_OK
 
 
+def cmd_update(args: argparse.Namespace) -> int:
+    """Delegate to install.sh in release mode.
+
+    An update *is* an install from a verified release: download, check the
+    SHA256, replace /opt/aadoctor, preserve configuration and state, restart the
+    service only if it was running. There is no second implementation of that
+    sequence.
+    """
+    arguments = ["--release"]
+    if args.version:
+        arguments += ["--version", args.version]
+    if args.force:
+        arguments.append("--force")
+    return _delegate(INSTALL_SCRIPT, "update", arguments)
+
+
 def cmd_uninstall(args: argparse.Namespace) -> int:
     """Delegate to uninstall.sh, which owns the removal logic.
 
     Keeping every ``rm`` in one script means one place to audit, and it keeps
     working when the Python installation is the thing that is broken.
     """
-    script = _find_uninstall_script()
-    if script is None:
+    arguments = []
+    if args.purge:
+        arguments.append("--purge")
+    if args.yes:
+        arguments.append("--yes")
+    return _delegate(UNINSTALL_SCRIPT, "uninstall", arguments)
+
+
+def _delegate(script_name: str, command_name: str, arguments: List[str]) -> int:
+    """Run one of aaDoctor's own shell scripts, which own the risky operations."""
+    script = distribution_root() / script_name
+    if not script.is_file():
         print(
-            f"{UNINSTALL_SCRIPT} not found next to {distribution_root()}.\n"
-            "Remove aaDoctor with the uninstall script from the release you installed.",
+            f"{script_name} not found in {distribution_root()}.\n"
+            f"Run {script_name} from the release or checkout you installed from.",
             file=sys.stderr,
         )
         return EXIT_NOT_FOUND
 
     if not environment.is_root():
-        print("'aadoctor uninstall' requires root.", file=sys.stderr)
+        print(f"'aadoctor {command_name}' requires root.", file=sys.stderr)
         return EXIT_PRIVILEGES
 
     command = ["/bin/bash", str(script)]
-    if args.purge:
-        command.append("--purge")
-    if args.yes:
-        command.append("--yes")
-
+    command.extend(arguments)
     completed = subprocess.run(command, check=False)
     return completed.returncode
-
-
-def _find_uninstall_script() -> Optional[Path]:
-    candidate = distribution_root() / UNINSTALL_SCRIPT
-    return candidate if candidate.is_file() else None
 
 
 def cmd_daemon(args: argparse.Namespace) -> int:
