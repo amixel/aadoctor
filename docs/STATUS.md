@@ -155,7 +155,11 @@ Nothing.
 2. On a Linux host with systemd: `./install.sh`, `aadoctor enable`, confirm the
    unit is active, `aadoctor disable`, `aadoctor uninstall --purge`. Closes
    AAD-004 and Phase 1.
-3. Tag `v0.1.0` and attach both files produced by `tools/package.sh`.
+3. Tag `v0.1.0` and attach both files produced by `tools/package.sh` — **after**
+   step 1, not before. Decided deliberately: the first server is installed from
+   a checkout, which `install.sh` supports and the lifecycle script exercises.
+   Pinning a version number before any field data would most likely pin one
+   that needs correcting in its first week.
 4. SPEC-009, the AI explainer — last, and optional.
 
 Step 1 is no longer just useful, it is the gate. Everything up to here can be
