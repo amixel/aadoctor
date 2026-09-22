@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""aaDoctor entry point.
+
+Deliberately thin: it locates the package and hands over. All behaviour lives
+in src/aadoctor/ so that the installed copy, a source checkout and
+``python3 -m aadoctor`` all run exactly the same code.
+
+Works through the /usr/local/bin/aadoctor symlink because the path is resolved
+with realpath before the package directory is derived from it.
+"""
+
+import os
+import sys
+
+if sys.version_info < (3, 8):
+    sys.stderr.write(
+        "aaDoctor requires Python 3.8 or newer (found %s).\n"
+        % ".".join(str(part) for part in sys.version_info[:3])
+    )
+    sys.exit(1)
+
+_HERE = os.path.dirname(os.path.realpath(__file__))
+_SRC = os.path.join(_HERE, "src")
+
+if os.path.isdir(_SRC) and _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
+
+from aadoctor.cli import main  # noqa: E402  (path setup must come first)
+
+if __name__ == "__main__":
+    sys.exit(main())

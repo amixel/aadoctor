@@ -1,0 +1,23 @@
+# aaDoctor configuration
+#
+# Installed to /etc/aadoctor/config.toml on first install only. An existing
+# configuration is never overwritten by an install or an upgrade (SPEC-001);
+# keys added by a newer version fall back to the built-in defaults.
+#
+# Only keys that this version actually uses are listed here. The full intended
+# configuration is described in README.md section 14 and arrives with the
+# phase that needs it.
+
+[monitor]
+# Master switch for the daemon's monitoring work.
+enabled = true
+
+# MySQL monitoring is not implemented and is not a dependency of aaDoctor.
+# Many servers use a remote database (README.md section 8).
+[mysql]
+enabled = false
+
+# AI is optional and off by default. aaDoctor works fully without it
+# (README.md section 9, ADR-006). Not implemented yet - see SPEC-009.
+[ai]
+enabled = false

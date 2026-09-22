@@ -1,0 +1,16 @@
+[Unit]
+Description=aaDoctor aaPanel Monitor
+After=network.target
+
+[Service]
+Type=simple
+# install.sh rewrites this line with the python3 interpreter it detected.
+ExecStart=/usr/bin/python3 /opt/aadoctor/aadoctor daemon
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
