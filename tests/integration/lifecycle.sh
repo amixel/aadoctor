@@ -203,6 +203,30 @@ check "installer aborts"              test "${code}" -ne 0
 check "nothing was installed"         absent /opt/aadoctor
 
 echo
+echo "=== 11. a checkout inside the install directory is refused ==="
+# `git clone ... /opt/aadoctor` is a natural thing to do, and it used to be
+# destructive: the swap deleted the clone and the install came out with no
+# systemd unit and no configuration. It must refuse, and leave the checkout
+# exactly where it is.
+rm -rf /opt/aadoctor
+mkdir -p /opt/aadoctor
+tar -c --exclude='__pycache__' -C /src . | tar -x -C /opt/aadoctor
+echo "marker" > /opt/aadoctor/.git-stand-in
+
+(cd /opt/aadoctor && bash ./install.sh > /tmp/install.self.log 2>&1)
+code=$?
+grep -i "would delete it" /tmp/install.self.log || true
+
+check "installer refuses"                 test "${code}" -ne 0
+check "the checkout is still there"       present /opt/aadoctor/install.sh
+check "nothing in it was removed"         present /opt/aadoctor/.git-stand-in
+check "the unit source survived"          present /opt/aadoctor/systemd/aadoctor.service
+check "the example config survived"       present /opt/aadoctor/config.example.toml
+check "no staging left behind"            absent /opt/.aadoctor.stage
+check "no previous directory left behind" absent /opt/.aadoctor.previous
+rm -rf /opt/aadoctor
+
+echo
 echo "========================================"
 echo "PASS: ${PASS}   FAIL: ${FAIL}"
 echo "========================================"

@@ -244,8 +244,33 @@ fetch_release() {
 
 # Decide what we install from: the checkout next to this script, or a verified
 # release archive.
+# A checkout that *is* the destination cannot be installed from.
+#
+# The swap moves ${INSTALL_DIR} aside and deletes it once the new tree is in
+# place - so the source, including its .git, goes with it. Worse, the files
+# read after the swap (config.example.toml and the systemd unit) are no longer
+# there, leaving a half-installed system with no unit and no configuration.
+#
+# There is no safe way to continue, so this refuses before anything is touched.
+# `git clone https://.../aadoctor.git` inside /opt is an entirely natural thing
+# to do, which is exactly why it has to be caught rather than documented.
+refuse_to_install_over_itself() {
+    case "$1" in
+        "${INSTALL_DIR}"|"${INSTALL_DIR}"/*)
+            fail "this checkout is inside ${INSTALL_DIR}, which is where aaDoctor installs to.
+Installing would delete it. Clone somewhere else and run the installer there:
+
+  git clone https://github.com/amixel/aadoctor.git /usr/local/src/aadoctor
+  cd /usr/local/src/aadoctor && sudo ./install.sh
+
+Nothing was installed."
+            ;;
+    esac
+}
+
 prepare_source() {
     if [ "${FORCE_RELEASE}" -eq 0 ] && source_is_complete "${SCRIPT_DIR}"; then
+        refuse_to_install_over_itself "${SCRIPT_DIR}"
         SOURCE_DIR="${SCRIPT_DIR}"
         ok "installing from ${SOURCE_DIR}"
         return 0

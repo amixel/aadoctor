@@ -182,7 +182,12 @@ python3 ./aadoctor sites --vhost-dir tests/fixtures/vhosts --json
 PYTHONPATH=src python3 -m aadoctor --version
 ```
 
-Requiring root, and therefore a disposable machine:
+Requiring root, and therefore a disposable machine.
+
+**Clone anywhere except `/opt/aadoctor`** — that is where aaDoctor installs to,
+and a checkout there would be the thing being replaced. The installer refuses
+rather than letting it happen, but `/usr/local/src/aadoctor` is the habit to
+have:
 
 ```bash
 sudo ./install.sh                  # from this checkout

@@ -243,6 +243,14 @@ No version has been released yet. The current source tree is `0.1.0-dev`.
   are now `100755`, and `tests/test_scripts.py` asserts the mode git records -
   the working tree cannot be used for this, because a Windows bind mount
   reports every file inside a container as `rwxrwxrwx`.
+- **`install.sh` destroyed the checkout when run from `/opt/aadoctor`.** That
+  directory is the install destination, and `git clone ... /opt/aadoctor` is a
+  natural thing to do. The swap moved the source aside and deleted it - taking
+  `.git` with it - and the files read afterwards were then missing, leaving a
+  system with the CLI installed but no systemd unit and no configuration. The
+  installer now refuses before touching anything and says where to clone
+  instead. A lifecycle check covers it, verified by reproducing the original
+  destruction with the guard removed.
 - `tools/package.sh` inherited permissions from the checkout through `cp -a`,
   so an artifact built on Windows would have shipped every file
   world-writable and would not have matched one built on Linux from the same
