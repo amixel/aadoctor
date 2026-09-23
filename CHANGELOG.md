@@ -243,6 +243,17 @@ No version has been released yet. The current source tree is `0.1.0-dev`.
   are now `100755`, and `tests/test_scripts.py` asserts the mode git records -
   the working tree cannot be used for this, because a Windows bind mount
   reports every file inside a container as `rwxrwxrwx`.
+- **The `open() failed` classification never matched anything.** Nginx writes
+  the path *between* the two words - `open() "/www/server/stop/404.html"
+  failed (2: No such file or directory)` - so the single substring in the
+  table could not match, and a production server turned 761 recognisable
+  errors into `other` in one five-minute window. A pattern may now be a tuple
+  of substrings that must all appear. `stat()` is covered too, and a test
+  asserts that every pattern in the table is satisfiable, because one that
+  cannot match reads as coverage while classifying nothing.
+  - The test fixture was why it survived: it asserted the pattern against a
+    message Nginx does not write. The classification fixtures are now copied
+    from real logs.
 - **`NOT_FOUND_FLOOD` could not fire on a normal server.** Its two conditions
   multiply: requiring a 30% share *and* 5 404s a second silently required the
   whole server to be serving 16.7 req/s. The first production incident had 82%

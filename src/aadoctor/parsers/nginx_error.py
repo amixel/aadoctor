@@ -27,8 +27,14 @@ LEVELS = ("debug", "info", "notice", "warn", "error", "crit", "alert", "emerg")
 #: come before the transport-level ones they arrive wrapped in: a FastCGI
 #: stderr line carrying a PHP fatal is more usefully a php_fatal.
 #:
+#: A pattern is one substring, or a tuple of substrings that must all appear.
+#: The tuple form exists because Nginx interpolates into some messages, so the
+#: words that identify them are not next to each other:
+#:
+#:     open() "/www/wwwroot/site/x.php" failed (2: No such file or directory)
+#:
 #: Adding a pattern is one entry here and nothing else.
-KIND_PATTERNS: Tuple[Tuple[str, str], ...] = (
+KIND_PATTERNS: Tuple[Tuple[object, str], ...] = (
     ("PHP Fatal error", "php_fatal"),
     ("PHP Parse error", "php_parse_error"),
     ("Allowed memory size", "php_memory_exhausted"),
@@ -43,7 +49,10 @@ KIND_PATTERNS: Tuple[Tuple[str, str], ...] = (
     ("worker_connections are not enough", "worker_connections_exhausted"),
     ("too many open files", "too_many_open_files"),
     ("client intended to send too large body", "body_too_large"),
-    ("open() failed", "open_failed"),
+    # Deliberately after "too many open files": a failed open caused by the
+    # descriptor limit is more usefully reported as the limit.
+    (("open()", "failed"), "open_failed"),
+    (("stat()", "failed"), "stat_failed"),
     ("no live upstreams", "no_live_upstreams"),
     ("SSL_do_handshake() failed", "ssl_handshake_failed"),
 )
@@ -127,9 +136,16 @@ def parse_error_line(line: str) -> Optional[ErrorEvent]:
     )
 
 
-#: Lowercased once at import so matching costs one lower() per line.
+#: Lowercased once at import so matching costs one lower() per line. A pattern
+#: that is a tuple requires every part, in any position.
 _KIND_PATTERNS_LOWER = tuple(
-    (pattern.lower(), kind) for pattern, kind in KIND_PATTERNS
+    (
+        tuple(part.lower() for part in pattern)
+        if isinstance(pattern, tuple)
+        else (pattern.lower(),),
+        kind,
+    )
+    for pattern, kind in KIND_PATTERNS
 )
 
 
@@ -139,10 +155,16 @@ def classify(message: str) -> Optional[str]:
     Matching ignores case: some of these strings come from ``strerror`` and
     arrive capitalised - Nginx writes ``(24: Too many open files)`` - and the
     casing of a C library message is not something to depend on.
+
+    A pattern may be several substrings, all of which must appear. Nginx
+    interpolates into some of its messages, so the words are not adjacent:
+    ``open() "/www/wwwroot/x.php" failed (2: No such file or directory)``.
+    A single substring cannot express that, and one that tried - ``open()
+    failed`` - matched nothing at all for as long as it existed.
     """
     lowered = message.lower()
-    for pattern, kind in _KIND_PATTERNS_LOWER:
-        if pattern in lowered:
+    for parts, kind in _KIND_PATTERNS_LOWER:
+        if all(part in lowered for part in parts):
             return kind
     return None
 

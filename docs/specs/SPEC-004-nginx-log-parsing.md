@@ -279,6 +279,28 @@ None. Records are transient; only aggregates
 
 ---
 
+## Implementation note: patterns Nginx interpolates into
+
+A classification pattern is one substring, or a **tuple of substrings that
+must all appear**. The tuple form is not decoration. Nginx interpolates into
+some of its messages, so the words that identify them are not adjacent:
+
+```text
+open() "/www/wwwroot/site/x.php" failed (2: No such file or directory)
+```
+
+`open() failed` as a single substring matches that line never. It sat in the
+table for four phases, looking like coverage and classifying nothing, and the
+first production server turned 761 recognisable errors into `other` in one
+five-minute window.
+
+The test fixture was the reason it survived: it asserted the pattern against a
+message reading exactly `open() failed (2: No such file or directory)`, which
+Nginx does not write. **A parser fixture written from what the format looks
+like proves only that the parser agrees with its author.** Fixtures for this
+table are now copied from real logs, and a test asserts that every pattern in
+the table is at least satisfiable.
+
 ## Acceptance criteria
 
 - [x] The aaPanel default access format parses into all mandatory fields.

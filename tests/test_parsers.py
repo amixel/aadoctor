@@ -445,11 +445,53 @@ class ErrorKinds(unittest.TestCase):
             "768 worker_connections are not enough": "worker_connections_exhausted",
             "accept4() failed (24: Too many open files)": "too_many_open_files",
             "client intended to send too large body: 20000000 bytes": "body_too_large",
-            'open() failed (2: No such file or directory)': "open_failed",
             "no live upstreams while connecting to upstream": "no_live_upstreams",
         }
         for message, expected in cases.items():
             self.assertEqual(self._kind_of(message), expected, message)
+
+    def test_messages_nginx_interpolates_a_path_into(self):
+        """Lines copied verbatim from a production server.
+
+        The table used to hold `open() failed` as one substring, and the test
+        above used to assert it against a message reading exactly that - which
+        Nginx never writes. It writes the path *between* the two words. The
+        pattern therefore matched nothing for as long as it existed, and a
+        real server turned 761 classifiable errors into `other` in a single
+        five-minute window.
+
+        The lesson is in the fixture, not the pattern: a parser test written
+        from what the format looks like proves the parser agrees with the
+        author's imagination.
+        """
+        cases = {
+            'open() "/www/server/stop/404.html" failed (2: No such file or '
+            'directory)': "open_failed",
+            'open() "/www/wwwroot/site/wp-login.php" failed (13: Permission '
+            "denied)": "open_failed",
+            'stat() "/www/wwwroot/site/x" failed (2: No such file or directory)':
+                "stat_failed",
+        }
+        for message, expected in cases.items():
+            self.assertEqual(self._kind_of(message), expected, message)
+
+    def test_the_descriptor_limit_wins_over_the_failed_open_it_caused(self):
+        message = ('open() "/www/wwwroot/site/x.php" failed '
+                   "(24: Too many open files)")
+        self.assertEqual(self._kind_of(message), "too_many_open_files")
+
+    def test_every_pattern_in_the_table_matches_something(self):
+        """A pattern that cannot match is worse than no pattern.
+
+        It reads as coverage while classifying nothing, which is how
+        `open() failed` survived four phases and a container suite.
+        """
+        for pattern, kind in nginx_error.KIND_PATTERNS:
+            parts = pattern if isinstance(pattern, tuple) else (pattern,)
+            # The parts joined by a space is the cheapest message that must
+            # satisfy the pattern. It proves the pattern is satisfiable; the
+            # cases above prove it matches what Nginx really writes.
+            self.assertEqual(nginx_error.classify(" ".join(parts)), kind, kind)
 
     def test_php_messages_carried_through_fastcgi(self):
         cases = {
@@ -680,21 +722,55 @@ class SourcePurity(unittest.TestCase):
             yield number, re.sub(r"\"[^\"]*\"|'[^']*'", "", line)
 
     def test_no_input_or_output(self):
-        forbidden = (
-            "open(",
-            "os.stat",
-            "os.path",
-            "Path(",
-            "subprocess",
-            "socket",
-            "urlopen",
-            "eval(",
-            "exec(",
-        )
+        """Read from the syntax tree, not from the text.
+
+        Scanning for the string `open(` failed the moment a docstring had to
+        quote the Nginx message `open() "..." failed` - the same false positive
+        the rules modules hit with the word `socket`. A parser that reaches the
+        filesystem is a parser that calls something; check the calls.
+        """
+        import ast
+
+        forbidden_calls = {"open", "eval", "exec", "compile", "__import__"}
+        # Matched on the full dotted name, so `urllib.parse` - which is string
+        # handling and nothing else - is allowed while `urllib.request` is not.
+        allowed_imports = {
+            "__future__", "re", "dataclasses", "datetime", "typing", "logging",
+            "pathlib", "urllib.parse",
+        }
+
+        def permitted(module):
+            return any(
+                module == allowed or module.startswith(allowed + ".")
+                for allowed in allowed_imports
+            )
+
         for name in self.MODULES:
-            for number, line in self._code_lines(name):
-                for call in forbidden:
-                    self.assertNotIn(call, line, f"{name}:{number}")
+            path = _support.ROOT / "src" / "aadoctor" / "parsers" / name
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call):
+                    # Bare names only: these are the builtins. `re.compile` is
+                    # an attribute call and is exactly what a parser should be
+                    # doing.
+                    called = getattr(node.func, "id", None)
+                    self.assertNotIn(called, forbidden_calls, f"{name}: {called}()")
+                elif isinstance(node, ast.Import):
+                    for alias in node.names:
+                        self.assertTrue(permitted(alias.name), f"{name}: {alias.name}")
+                elif isinstance(node, ast.ImportFrom) and not node.level:
+                    module = node.module or ""
+                    self.assertTrue(permitted(module), f"{name}: {module}")
+
+    def test_pathlib_is_imported_but_never_used_to_touch_the_disk(self):
+        # SPEC-004 lets an event carry the path of the log it came from, as a
+        # value. Nothing opens it.
+        for name in self.MODULES:
+            path = _support.ROOT / "src" / "aadoctor" / "parsers" / name
+            text = path.read_text(encoding="utf-8")
+            for method in (".read_text(", ".open(", ".iterdir(", ".exists(", ".stat("):
+                self.assertNotIn(method, text, f"{name}: {method}")
 
 
 class Performance(unittest.TestCase):
