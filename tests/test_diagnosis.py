@@ -96,6 +96,56 @@ class DistributedScenario(unittest.TestCase):
         self.assertEqual(self.result.findings, [])
 
 
+class TooLittleTrafficToJudge(unittest.TestCase):
+    """The load was real; there was nothing to look at.
+
+    This is what an incident opening shortly after the daemon starts looks
+    like, and it is the first thing the first production install produced:
+    3.71 per core, and nine requests in ten seconds of window.
+
+    Saying "the logs show no dominant site" there would be a claim the data
+    does not support. Nine requests cannot show a dominant anything.
+    """
+
+    def setUp(self):
+        window = fixtures.window(
+            60,
+            coverage=10.0,
+            total_requests=9,
+            per_site=[fixtures.site("a.com.br", 9, 9, paths=[("/", 9)],
+                                    ips=[("66.249.64.193", 9)], statuses={"200": 9})],
+            statuses={"200": 9},
+        )
+        self.result = diagnosis.diagnose(
+            fixtures.incident(peak=fixtures.one_window(window), cpu_count=2, peak_load=7.43)
+        )
+
+    def test_it_reaches_no_conclusion(self):
+        self.assertFalse(self.result.conclusive)
+        self.assertIsNone(self.result.primary_site)
+
+    def test_it_says_there_was_too_little_traffic_to_judge(self):
+        self.assertIn("Not enough traffic to judge", self.result.summary)
+        self.assertIn("9 requests", self.result.summary)
+        self.assertIn("100", self.result.summary)
+
+    def test_it_does_not_claim_the_logs_showed_nothing(self):
+        # The distinction this whole test exists for.
+        self.assertNotIn("show no dominant", self.result.summary)
+
+    def test_it_says_the_load_itself_is_real(self):
+        self.assertIn("load rise is real", self.result.summary)
+
+    def test_it_says_the_traffic_is_not_ruled_out(self):
+        self.assertIn("not the same as it being ruled out", self.result.summary)
+
+    def test_a_full_window_with_nothing_dominant_reads_differently(self):
+        distributed = diagnosis.diagnose(fixtures.distributed_scenario())
+
+        self.assertIn("show no dominant", distributed.summary)
+        self.assertNotIn("Not enough traffic", distributed.summary)
+
+
 class OneQuietSiteWithOneEndpoint(unittest.TestCase):
     """Ten even sites, one of which serves a single endpoint.
 

@@ -243,6 +243,14 @@ No version has been released yet. The current source tree is `0.1.0-dev`.
   are now `100755`, and `tests/test_scripts.py` asserts the mode git records -
   the working tree cannot be used for this, because a Windows bind mount
   reports every file inside a container as `rwxrwxrwx`.
+- **`diagnose` claimed the logs showed nothing when it had not looked.** An
+  incident opening seconds after the daemon starts holds a few seconds of
+  window - the first one on the first production server held nine requests -
+  and every share-based rule reports `below_minimum_volume`. The summary still
+  read "the monitored Nginx and PHP logs show no dominant site, path, address
+  or error behind it", which nine requests cannot establish. It now
+  distinguishes the two negatives: too little traffic to judge, against a full
+  window in which nothing stood out.
 - **`aadoctor top` ran to more than 140 columns on a real server.** The path
   column was sized to the longest path, and real paths are long slugs. Both
   columns are now bounded, and a shortened value is cut in the middle and

@@ -241,7 +241,7 @@ def diagnose(incident: Any, thresholds: Optional[Thresholds] = None) -> Diagnosi
 
     winner = _winner(scores)
     if winner is None:
-        diagnosis.summary = _inconclusive_summary(facts, findings, None)
+        diagnosis.summary = _inconclusive_summary(facts, findings, blocked, limits, None)
         return diagnosis
 
     # Net of everything pointing elsewhere. Disagreement lowers confidence by
@@ -276,7 +276,7 @@ def diagnose(incident: Any, thresholds: Optional[Thresholds] = None) -> Diagnosi
         diagnosis.summary = _summary(diagnosis)
     else:
         diagnosis.confidence = 0.0
-        diagnosis.summary = _inconclusive_summary(facts, findings, winner)
+        diagnosis.summary = _inconclusive_summary(facts, findings, blocked, limits, winner)
 
     return diagnosis
 
@@ -353,14 +353,29 @@ def _summary(diagnosis: Diagnosis) -> str:
     return ", ".join(parts) + "."
 
 
+#: The reason a rule gives when the window simply did not hold enough traffic
+#: for a share to mean anything.
+STARVED = "below_minimum_volume"
+
+
 def _inconclusive_summary(
-    facts: Facts, findings: List[Finding], candidate: Optional[str] = None
+    facts: Facts,
+    findings: List[Finding],
+    blocked: List[NotEvaluable],
+    limits: Thresholds,
+    candidate: Optional[str] = None,
 ) -> str:
     """The honest answer when the logs do not name anything.
 
     This is a useful result, not a failure. The load rise was measured and is
     real; what the logs do not show is a dominant source for it. Inventing a
     suspect to avoid saying so would make every other answer worth less.
+
+    But there are two different negatives here, and saying the wrong one is
+    its own kind of invention. "We looked at a full window and nothing stood
+    out" is a finding. "We had nine requests, so nothing could stand out" is
+    not a finding at all, and must not be phrased as one - it happens on every
+    incident that opens shortly after the daemon starts.
     """
     if not facts.has_traffic:
         return (
@@ -369,6 +384,17 @@ def _inconclusive_summary(
         )
 
     base = "No clear log-based cause identified."
+
+    if any(item.reason == STARVED for item in blocked) and not findings:
+        return (
+            "Not enough traffic to judge: the window holds %s requests over "
+            "%.0f seconds, below the %s needed before any share means "
+            "anything. The load rise is real and recorded. Whether the web "
+            "traffic explains it is unknown - which is not the same as it "
+            "being ruled out."
+            % (f"{facts.total_requests:,}", facts.coverage_seconds, f"{limits.min_volume:,}")
+        )
+
     if candidate and not _anchored(findings, candidate):
         return (
             "%s %s shows concentration within its own traffic, but it is not a "
