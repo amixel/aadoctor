@@ -218,8 +218,18 @@ Not implemented, and deliberately not registered — running it is a usage error
 listing what does exist:
 
 ```bash
-aadoctor explain <incident>
+aadoctor explain <incident>          SPEC-009, deferred
+
+aadoctor wp sites                    SPEC-016, Draft
+aadoctor wp scan <site> [--json]     SPEC-016, Draft
+aadoctor wp quarantine <finding-id>  SPEC-017, Draft and BLOCKED on ADR-010
+aadoctor wp quarantine list          SPEC-017, Draft and BLOCKED
+aadoctor wp restore <id>             SPEC-017, Draft and BLOCKED
+aadoctor wp purge <id>               SPEC-017, Draft and BLOCKED
 ```
+
+`doctor` is also planned to grow a `DIAGNOSTIC COVERAGE` section with
+`--coverage` and `--json` (SPEC-015), and `diagnose` a system half (SPEC-012).
 
 Do not document a command before it exists. When a command lands, move it from
 `Planned` to `Current` in this file and record it in
@@ -324,6 +334,11 @@ Per phase, before an item is `Done`:
 | 5 | Each rule fires on its fixture, at its threshold and not below it, and none fires on an evenly loaded server; a diagnosis can be inconclusive and says so; the same incident always yields the same answer |
 | 6 | Each command renders from stored data only and fits an 80-column terminal |
 | 7 | Everything above still passes with AI disabled, and with AI enabled but failing |
+| 8 | A resource sample on a kernel with PSI and one without; rates null on the first sample and on a counter reset; the sample ring bounded; no process scan while load is low; no command line anywhere in a serialized incident |
+| 9 | Each system finding at its threshold and not below; no process family named without a host-level anchor; HTTP and system scores never added; "the host was quiet" and "we could not look" render differently |
+| 10 | Coverage states distinguishable; a gap never changes `doctor`'s exit code; a negative claim only where the aspect is `OK` |
+| 11a | **A full scan leaves `/www` byte-identical and stat-identical**; no PHP executed; no `wp-config.php` value in any output; a symlink out of the site refused; `eval()` alone never above `LOW` |
+| 11b | **Blocked on ADR-010.** With the flag off nothing is written; a failure injected at any step leaves the original in place; `uninstall --purge` refuses while quarantine is non-empty; a `VERY_HIGH` finding still moves nothing |
 
 ---
 

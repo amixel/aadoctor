@@ -2,6 +2,14 @@
 
 Status: Draft
 
+**Deferred until deterministic system diagnostics are field-validated.** The
+deterministic engine now answers HTTP-caused degradation, and SPEC-010 to
+SPEC-015 extend it to host resources — none of which has been tested against a
+real server whose load comes from traffic. This spec explains what that engine
+decided, so it is worth nothing until the engine decides well: an explanation
+layer over unchecked answers only makes them more convincing. No date, and no
+re-planning of its contents here — everything below stands as written.
+
 Related: [README.md](../../README.md) §9, §10, §62, §72, §73, §74 ·
 [ADR-006](../adr/ADR-006-deterministic-engine-before-ai.md) ·
 Backlog: AAD-060, AAD-061, AAD-062, AAD-063

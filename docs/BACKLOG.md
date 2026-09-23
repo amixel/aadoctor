@@ -33,8 +33,8 @@ Rules for agents working this backlog are in [/CLAUDE.md](../CLAUDE.md).
 Phase 1 — Foundation, complete except for one check that needs real systemd.
 
 AAD-001, AAD-002, AAD-003, AAD-005, AAD-006 and AAD-007 are `Done`: implemented
-and verified in a Linux container — 70 unit tests on Python 3.8 and 3.12, 42
-lifecycle checks and 32 release checks (see [DEVELOPMENT.md](DEVELOPMENT.md)).
+and verified in a Linux container — 647 unit tests on Python 3.8 and 3.12, 49
+lifecycle checks and 37 release checks (see [DEVELOPMENT.md](DEVELOPMENT.md)).
 
 AAD-004 stays `Implemented`: a container has no init system, so the unit has
 never been loaded by real systemd.
@@ -943,6 +943,833 @@ Acceptance:
 
 ---
 
+## Later — system observability and diagnosis
+
+Phases 8, 9 and 10. **All items are `Planned` and every governing spec is
+`Draft`**; nothing here is designed enough to implement from yet.
+
+Phase 7 keeps its number and is skipped in time, not cancelled. SPEC-009
+explains what the deterministic engine decided, and the engine is about to grow
+a whole new half — so it waits for that half to be field-validated. Phase 8
+following Phase 6 does not mean Phase 7 is done.
+
+**Why this exists.** Twelve hours on the first production server produced twenty
+incidents peaking at 43.6 load per core, with HTTP traffic flat or falling. The
+diagnoses were correctly inconclusive; the cause was memory pressure and
+sustained swap, which is invisible to a web-server log by construction. aaDoctor
+could say where *not* to look and nothing more. These three phases close that.
+
+```text
+Phase 8 — System observability      SPEC-010, SPEC-011
+Phase 9 — System diagnosis          SPEC-012, SPEC-013, SPEC-014
+Phase 10 — Coverage and hardening   SPEC-015
+```
+
+New id ranges follow the existing decade-per-spec convention: `07x` SPEC-010,
+`08x` SPEC-011, `09x` SPEC-012, `10x` SPEC-013, `11x` SPEC-014, `12x` SPEC-015.
+No existing id is reused or renumbered.
+
+### AAD-070 — Memory and swap sampling
+
+Status: Planned
+Phase: 8
+Priority: High
+Related spec: [SPEC-010](specs/SPEC-010-system-resource-monitoring.md)
+Dependencies: AAD-030
+
+Goal:
+Sample `/proc/meminfo` and the swap counters of `/proc/vmstat` on the monitor
+tick, and derive swap rates in bytes per second.
+
+Acceptance:
+- `MemAvailable` presence is detected, never assumed and never estimated.
+- Swap rates come from two samples and the system page size.
+- The first sample publishes no rates; a counter reset publishes none either,
+  with the reason recorded.
+- An unreadable source yields nulls and an `unavailable` entry, never zeros.
+
+---
+
+### AAD-071 — CPU, iowait and steal sampling
+
+Status: Planned
+Phase: 8
+Priority: High
+Related spec: [SPEC-010](specs/SPEC-010-system-resource-monitoring.md)
+Dependencies: AAD-070
+
+Goal:
+Sample the aggregate `cpu` line of `/proc/stat` and express each field as a
+share of the CPU delta.
+
+Acceptance:
+- Shares are computed against the delta of all fields, not against wall time.
+- `steal` is reported separately — a starved VPS must not read as a busy server.
+- Unknown extra fields count toward the denominator without breaking the parse.
+
+---
+
+### AAD-072 — Pressure stall information
+
+Status: Planned
+Phase: 8
+Priority: Medium
+Related spec: [SPEC-010](specs/SPEC-010-system-resource-monitoring.md)
+Dependencies: AAD-070
+
+Goal:
+Read `/proc/pressure/{cpu,memory,io}` where the kernel provides them.
+
+Acceptance:
+- The kernel's own `avg10`/`avg60`/`avg300` are stored unchanged; nothing is
+  derived from the `total=` counter.
+- Absence (CentOS 7, kernel 3.10) is a normal, reported state — and no finding
+  may require PSI to be evaluable.
+
+---
+
+### AAD-073 — Disk and inode sampling
+
+Status: Planned
+Phase: 8
+Priority: Medium
+Related spec: [SPEC-010](specs/SPEC-010-system-resource-monitoring.md)
+Dependencies: AAD-070
+
+Goal:
+`os.statvfs()` over at most four resolved mount points, on a longer interval.
+
+Acceptance:
+- Mounts resolved once at startup; `/proc/mounts` is not walked for more.
+- Sampled at most every 60 seconds; a path that failed is skipped for a cool-off.
+- Inode exhaustion is reported separately from space exhaustion.
+
+---
+
+### AAD-074 — Bounded sample ring and incident resource block
+
+Status: Planned
+Phase: 8
+Priority: High
+Related spec: [SPEC-010](specs/SPEC-010-system-resource-monitoring.md)
+Dependencies: AAD-070, AAD-071, AAD-072, AAD-073, AAD-034
+
+Goal:
+Retain samples in a capped ring, publish the latest in `runtime.json`, and
+freeze `start`, `peak` and `end` into the incident.
+
+Acceptance:
+- The ring never exceeds 64 records under any configuration.
+- `peak` uses the load peak SPEC-006 already tracks; no second peak is defined.
+- `end` is absent on an interrupted incident, not zero.
+- **No resource threshold opens an incident.** Load remains the only trigger.
+- A full sample completes in under 5 ms; zero writes outside
+  `/var/lib/aadoctor/`.
+
+---
+
+### AAD-080 — Bounded process scan
+
+Status: Planned
+Phase: 8
+Priority: High
+Related spec: [SPEC-011](specs/SPEC-011-process-attribution.md)
+Dependencies: AAD-074, ADR-009
+
+Goal:
+A two-phase scan of `/proc/<pid>/` producing top-N tables by CPU, memory and
+I/O, only while the server is under pressure.
+
+Acceptance:
+- No scan runs while load is below `recovery_per_cpu`.
+- A `comm` containing spaces or `)` does not shift any other field.
+- Processes are matched between scans by `(pid, starttime)`; a reused pid yields
+  no CPU rate.
+- A process that exits mid-scan is skipped silently, not counted as a failure.
+- A full scan over 400 processes completes within 150 ms.
+- **No command line is persisted, logged or printed** — asserted by a test that
+  plants a secret in a fixture and searches the serialized output for it.
+- `/proc/<pid>/environ` is never opened — asserted by source inspection.
+
+---
+
+### AAD-081 — Process family aggregation
+
+Status: Planned
+Phase: 8
+Priority: High
+Related spec: [SPEC-011](specs/SPEC-011-process-attribution.md)
+Dependencies: AAD-080
+
+Goal:
+Group processes into families from an explicit table, with totals per family.
+
+Acceptance:
+- Family totals are computed over every process seen, then the per-process table
+  is truncated — never the reverse.
+- The PHP-FPM pool label is extracted only by the anchored expression of
+  ADR-009; anything else is discarded.
+- A family is a label for grouping and is never presented as responsibility.
+- Resident totals state that shared pages are counted more than once.
+
+---
+
+### AAD-082 — Process snapshot in the incident
+
+Status: Planned
+Phase: 8
+Priority: Medium
+Related spec: [SPEC-011](specs/SPEC-011-process-attribution.md)
+Dependencies: AAD-081, AAD-034
+
+Goal:
+Attach the scans at the incident opening and at the load peak.
+
+Acceptance:
+- No `end` scan: the process table after recovery answers no question.
+- A missing scan is an absent key, never an empty machine.
+- `show` renders the block as facts and concludes nothing.
+
+---
+
+### AAD-090 — Memory and swap findings
+
+Status: Planned
+Phase: 9
+Priority: High
+Related spec: [SPEC-012](specs/SPEC-012-system-deterministic-findings.md)
+Dependencies: AAD-074
+
+Goal:
+`MEMORY_PRESSURE`, `SWAP_PRESSURE`, `SWAP_THRASHING`.
+
+Acceptance:
+- SPEC-007's `strength()` and level bands are reused; no second scale exists.
+- An inverted metric (lower is worse) scores correctly through the unmodified
+  function.
+- `MEMORY_PRESSURE` is evaluable without PSI.
+- `SWAP_PRESSURE` is capped at LOW and never anchors a diagnosis.
+- No swap configured yields `no_swap_configured`, never "no thrashing".
+
+---
+
+### AAD-091 — CPU and I/O findings
+
+Status: Planned
+Phase: 9
+Priority: High
+Related spec: [SPEC-012](specs/SPEC-012-system-deterministic-findings.md)
+Dependencies: AAD-074
+
+Goal:
+`CPU_SATURATION` and `IO_PRESSURE`.
+
+Acceptance:
+- Steal above its note threshold appears prominently in the evidence.
+- High load with low CPU busy is stated explicitly, not left to be inferred.
+- When memory and I/O both fire with high swap rates, memory is primary and I/O
+  is presented as its consequence — one problem, not two.
+
+---
+
+### AAD-092 — Disk and inode findings
+
+Status: Planned
+Phase: 9
+Priority: Medium
+Related spec: [SPEC-012](specs/SPEC-012-system-deterministic-findings.md)
+Dependencies: AAD-073
+
+Goal:
+`DISK_SPACE_PRESSURE` and `INODE_PRESSURE`, per mount.
+
+Acceptance:
+- Reported per mount; a full `/boot` is not confused with a full `/`.
+- Inode exhaustion is its own finding — the symptom is identical to a full disk
+  and the cause is not.
+
+---
+
+### AAD-093 — Process domination findings
+
+Status: Planned
+Phase: 9
+Priority: High
+Related spec: [SPEC-012](specs/SPEC-012-system-deterministic-findings.md)
+Dependencies: AAD-081
+
+Goal:
+`PROCESS_CPU_DOMINATING` and `PROCESS_MEMORY_DOMINATING`.
+
+Acceptance:
+- **A family is named only when a host-level finding for the same resource also
+  fired.** Without the anchor the finding is listed and names no culprit.
+- Reported as a family, with individual processes as supporting evidence.
+- No process is named as responsible for a site.
+
+---
+
+### AAD-094 — OOM_EVENT
+
+Status: Planned
+Phase: 9
+Priority: High
+Related spec: [SPEC-012](specs/SPEC-012-system-deterministic-findings.md)
+Dependencies: AAD-070, AAD-111
+
+Goal:
+Report an OOM kill from the `/proc/vmstat` counter, with the victim named when
+SPEC-014 can supply it.
+
+Acceptance:
+- VERY_HIGH by construction; confidence does not scale with a count.
+- The output states which source it had — a counter, or the kernel line.
+- An unobservable OOM is `oom_counter_unavailable`, never "no OOM".
+
+---
+
+### AAD-095 — HTTP and system correlation
+
+Status: Planned
+Phase: 9
+Priority: High
+Related spec: [SPEC-012](specs/SPEC-012-system-deterministic-findings.md)
+Dependencies: AAD-090 … AAD-094
+
+Goal:
+A diagnosis with two domains, a `primary_domain`, and honest negatives.
+
+Acceptance:
+- **The two scores are never added.** A site and a resource are not comparable.
+- With both conclusive, both are reported and neither is called the cause of the
+  other — aaDoctor cannot tell cause from effect here and says so.
+- With strong system evidence the output **never** contains "no clear cause
+  identified".
+- "The host resources were quiet" and "the host resources could not be observed"
+  produce different sentences — asserted directly.
+- `ruleset_version` increments.
+
+---
+
+### AAD-096 — `diagnose` system sections
+
+Status: Planned
+Phase: 9
+Priority: High
+Related spec: [SPEC-008](specs/SPEC-008-cli-reporting.md)
+Dependencies: AAD-095
+
+Goal:
+`SYSTEM`, `PROCESS` and `SYSTEM EVIDENCE` sections, and a domain marker on every
+existing row.
+
+Acceptance:
+- 80 columns, clean when piped, bounded columns with middle elision.
+- **SPEC-008's inconclusive closing paragraph is rewritten in the same change**,
+  not after it: three of the four things it names as invisible become
+  observable.
+- No output is phrased as an instruction to change the server.
+
+---
+
+### AAD-097 — PHP-FPM findings
+
+Status: Planned
+Phase: 9
+Priority: High
+Related spec: [SPEC-012](specs/SPEC-012-system-deterministic-findings.md)
+Dependencies: AAD-100, AAD-101, AAD-102
+
+Goal:
+`PHP_FPM_POOL_SATURATION`, `PHP_FPM_MAX_CHILDREN_REACHED` and
+`PHP_FPM_PROCESS_PRESSURE`.
+
+Deliberately numbered under SPEC-012 rather than SPEC-013: discovery produces
+facts, one rules registry reads them. A finding defined elsewhere would need its
+own scoring, its own levels and its own route into correlation.
+
+Acceptance:
+- `PHP_FPM_PROCESS_PRESSURE` is capped at MEDIUM — it projects from
+  configuration and does not measure what happened.
+- Missing pool facts yield `php_fpm_facts_unavailable`.
+- **No output says to raise or lower `pm.max_children`**, including by quoting
+  PHP-FPM's own "consider raising it".
+
+---
+
+### AAD-100 — PHP version and pool discovery
+
+Status: Planned
+Phase: 9
+Priority: High
+Related spec: [SPEC-013](specs/SPEC-013-php-fpm-pressure-and-pool-discovery.md)
+Dependencies: AAD-010
+
+Goal:
+Discover installed PHP versions and parse their pool configuration, read-only.
+
+Acceptance:
+- **Every path confirmed against a real aaPanel server first**, and the spec
+  corrected where it is wrong, before anything else here is accepted.
+- `php_admin_value[...]` does not break the parser; `$pool` is substituted.
+- An `include` inside a pool file is followed one level within that version's
+  own tree and nowhere else.
+- An unparsable `pm.max_children` is recorded as unparsed, never defaulted.
+- Zero writes under `/www/`; no mode or ownership changes.
+
+---
+
+### AAD-101 — Site to PHP version and pool mapping
+
+Status: Planned
+Phase: 9
+Priority: Medium
+Related spec: [SPEC-013](specs/SPEC-013-php-fpm-pressure-and-pool-discovery.md)
+Dependencies: AAD-100
+
+Goal:
+Resolve site to PHP version from the vhost, and to a pool where the
+configuration decides it.
+
+Acceptance:
+- The version comes from the `include enable-php-NN.conf` filename or a
+  `fastcgi_pass` target — **SPEC-002's rule of not following `include` holds**.
+- `mapping_state` is `certain`, `ambiguous` or `unknown`, never a bare null.
+- The sites sharing a pool are presented as scope, never as suspects.
+
+---
+
+### AAD-102 — PHP-FPM log and worker counts
+
+Status: Planned
+Phase: 9
+Priority: High
+Related spec: [SPEC-013](specs/SPEC-013-php-fpm-pressure-and-pool-discovery.md)
+Dependencies: AAD-100, AAD-081
+
+Goal:
+Follow `php-fpm.log` with the existing incremental reader and count running
+workers per pool from the existing process scan.
+
+Acceptance:
+- Tailed from the end on first sight, like every other log.
+- `server reached pm.max_children` classified with its pool and timestamp.
+- `child exited on signal 9` classified, and corroborates SPEC-014's OOM events.
+- **Patterns tested against real PHP-FPM output**, not written from memory.
+- No log level, slow log or `pm.status_path` is enabled or changed.
+
+---
+
+### AAD-110 — Kernel event source and incremental reader
+
+Status: Planned
+Phase: 9
+Priority: Medium
+Related spec: [SPEC-014](specs/SPEC-014-host-kernel-events.md)
+Dependencies: AAD-012
+
+Goal:
+Read `/dev/kmsg` incrementally and non-blocking, with a text-file fallback.
+
+Acceptance:
+- **No subprocess.** `dmesg` and `journalctl` are not executed.
+- **`/proc/kmsg` is never opened** — reading it consumes messages other software
+  depends on, which is a side effect on the rest of the system.
+- First read starts at the end of the buffer.
+- `EAGAIN` is the quiet case; `EPIPE` records a gap and reading continues.
+- The fallback is never used alongside `/dev/kmsg`, so nothing is counted twice.
+
+---
+
+### AAD-111 — Kernel event classification
+
+Status: Planned
+Phase: 9
+Priority: Medium
+Related spec: [SPEC-014](specs/SPEC-014-host-kernel-events.md)
+Dependencies: AAD-110
+
+Goal:
+Classify OOM kills, segfaults, hung tasks, filesystem and I/O errors, and attach
+those inside an incident window.
+
+Acceptance:
+- **Every pattern tested against real captured kernel output.** The project has
+  already shipped one pattern that matched nothing the real software writes.
+- An OOM line yields victim name, pid and the kernel's memory figures.
+- Events are bounded in count and length; truncation and dropped counts are
+  recorded, and so are buffer gaps.
+- A crafted message containing a path or shell metacharacters is stored as text
+  and never used to open a file or build a command.
+- **A kernel event does not open an incident.**
+
+---
+
+### AAD-120 — Coverage model
+
+Status: Planned
+Phase: 10
+Priority: High
+Related spec: [SPEC-015](specs/SPEC-015-diagnostic-coverage-self-check.md)
+Dependencies: AAD-074, AAD-080, AAD-100, AAD-110
+
+Goal:
+One structure holding a state and a reason per observable aspect.
+
+Acceptance:
+- `OK`, `PARTIAL`, `UNAVAILABLE`, `UNSUPPORTED` and `UNKNOWN` are
+  distinguishable and produce different sentences.
+- Every non-`OK` state carries a reason and the spec that owns it.
+- Runtime aspects come from the published snapshot; the CLI recomputes nothing
+  and triggers no scan, no kernel read and no log parse.
+
+---
+
+### AAD-121 — `doctor` coverage section
+
+Status: Planned
+Phase: 10
+Priority: High
+Related spec: [SPEC-015](specs/SPEC-015-diagnostic-coverage-self-check.md)
+Dependencies: AAD-120
+
+Goal:
+Render coverage in `doctor`, with `--coverage` and `--json`, plus a bounded
+known-gaps list.
+
+Acceptance:
+- **A coverage gap never changes `doctor`'s exit code.** A server without PSI is
+  a server aaDoctor works on.
+- `doctor` still performs zero writes, and completes in under 500 ms with 50
+  sites.
+- With the daemon stopped, runtime aspects are `UNKNOWN` and the output says
+  what to do about it.
+- No `aadoctor coverage` command: one question, one command.
+
+---
+
+### AAD-122 — Coverage-aware negatives
+
+Status: Planned
+Phase: 10
+Priority: High
+Related spec: [SPEC-015](specs/SPEC-015-diagnostic-coverage-self-check.md)
+Dependencies: AAD-120, AAD-095
+
+Goal:
+Let coverage constrain what the diagnosis may deny, through the existing
+`not_evaluable` mechanism.
+
+Acceptance:
+- The diagnosis says "no dominant process" **only** when process attribution is
+  `OK`, and a different sentence otherwise — asserted on the wording.
+- An `UNAVAILABLE` aspect leaves every other finding's confidence untouched.
+- The incident records the coverage states from the moment it opened, so an old
+  incident is not reinterpreted under today's capabilities.
+- Coverage never raises a confidence.
+
+---
+
+## Later — WordPress security
+
+Phase 11. **All items `Planned`, both governing specs `Draft`.** This is a
+second domain, not a continuation of the first: performance and security are
+different questions about the same server, and they stay apart.
+
+```text
+Phase 11a — Security audit        SPEC-016   read-only
+Phase 11b — Quarantine & recovery SPEC-017   writes under /www/
+```
+
+Id ranges continue the decade-per-spec convention: `13x` SPEC-016, `14x`
+SPEC-017.
+
+**Phase 11b is blocked.** SPEC-017 contradicts
+[ADR-001](adr/ADR-001-non-invasive-read-only-architecture.md), which is
+`Accepted` and which already rejected optional remediation behind a confirmation
+flag. ADR-010 exists to resolve that and is `Proposed`. **Nothing in AAD-140 …
+AAD-143 may be implemented while it stays that way** — and accepting it requires
+writing ADR-001's successor in the same change.
+
+Phase 11a is not blocked and needs no ADR to begin: every check works offline.
+Only core integrity and vulnerability matching need reference data, and Tier 1
+of ADR-011 covers those with a file the administrator places on the server.
+
+### AAD-130 — WordPress discovery
+
+Status: Planned
+Phase: 11a
+Priority: High
+Related spec: [SPEC-016](specs/SPEC-016-wordpress-security-audit.md)
+Dependencies: AAD-010
+
+Goal:
+Find WordPress installations under a discovered site, and report version claims.
+
+Acceptance:
+- **SPEC-002 captures the vhost `root` directive first** — it does not today,
+  and without it there is no path to scan.
+- Detection is by `wp-includes/version.php`, never by directory name and never
+  by `wp-config.php` alone.
+- The search is bounded: the site root and one level of subdirectories, never a
+  recursive hunt.
+- Several installations under one site are each reported.
+- The version is parsed, **never executed**.
+- Multisite is detected and reported as not handled.
+
+---
+
+### AAD-131 — Core manifest handling
+
+Status: Planned
+Phase: 11a
+Priority: High
+Related spec: [SPEC-016](specs/SPEC-016-wordpress-security-audit.md)
+Dependencies: AAD-130
+
+Goal:
+Load a core manifest from the local cache; optionally fetch one under ADR-011.
+
+Acceptance:
+- **Tier 0 is the default**: no manifest, no network, integrity `UNAVAILABLE`
+  naming the version it needed.
+- Tier 1 reads `/var/lib/aadoctor/wp-manifests/<version>.json` and makes no
+  request.
+- Tier 2 is off by default and refuses to exist until ADR-011 is accepted.
+- The report always names the source, the algorithm and the age.
+- **The exact coverage of the official manifest is confirmed against a real API
+  response** before this is built, not written from what the format is believed
+  to look like.
+
+---
+
+### AAD-132 — Core integrity comparison
+
+Status: Planned
+Phase: 11a
+Priority: High
+Related spec: [SPEC-016](specs/SPEC-016-wordpress-security-audit.md)
+Dependencies: AAD-131
+
+Goal:
+`MATCH` / `MODIFIED` / `UNKNOWN` / `MISSING` per core file.
+
+Acceptance:
+- Comparison is by content. **A file is never judged safe by its name.**
+- A forged `version.php` claiming a different release yields `UNRELIABLE`, not a
+  list of modifications.
+- `UNKNOWN` is produced **only** inside directories the manifest describes
+  completely — never inside `plugins/` or `themes/`.
+- With no manifest, nothing implies the core is intact.
+
+---
+
+### AAD-133 — Suspicious file signals
+
+Status: Planned
+Phase: 11a
+Priority: High
+Related spec: [SPEC-016](specs/SPEC-016-wordpress-security-audit.md)
+Dependencies: AAD-130
+
+Goal:
+The five signal categories, the weight table and the risk bands.
+
+Acceptance:
+- **`eval()` alone never exceeds `LOW`.** `MEDIUM` needs two categories, `HIGH`
+  needs three.
+- A request superglobal reaching an executor is `VERY_HIGH` on its own.
+- PHP under `uploads/` is found regardless of file extension.
+- A real minified library stays at `LOW`; a real webshell sample reaches
+  `VERY_HIGH`. **Both from real samples** — patterns written from an idea of
+  what a webshell looks like will match nothing.
+- **No value from `wp-config.php` reaches the report** — only line numbers and
+  pattern names. Asserted by planting a password in a fixture.
+- Every finding prints every signal that contributed, with its weight.
+
+---
+
+### AAD-134 — Plugin and theme inventory
+
+Status: Planned
+Phase: 11a
+Priority: Medium
+Related spec: [SPEC-016](specs/SPEC-016-wordpress-security-audit.md)
+Dependencies: AAD-130
+
+Goal:
+Slug, name, version and path for plugins, themes and mu-plugins.
+
+Acceptance:
+- Parsed from the plugin header block and from `style.css`, over a bounded read.
+  No PHP is executed.
+- Single-file plugins are included; `mu-plugins` are always inventoried.
+- A missing version header is `version_unknown`, never guessed from a directory
+  name.
+- **`status` is `unknown`**: activation lives in the database, and this spec
+  neither reads credentials nor connects to one.
+
+---
+
+### AAD-135 — Vulnerability intelligence
+
+Status: Planned
+Phase: 11a
+Priority: Low
+Related spec: [SPEC-016](specs/SPEC-016-wordpress-security-audit.md)
+Dependencies: AAD-134, ADR-011
+
+Goal:
+Match the inventory against an offline feed.
+
+Acceptance:
+- **No static list is baked into the release.** It would be stale on the day it
+  ships and would answer confidently from year-old data.
+- The feed is a file the administrator places; fetching is opt-in and off by
+  default.
+- The feed's age is shown next to every result, and ages visibly.
+- **Absent or stale never renders as "no known vulnerabilities".**
+
+---
+
+### AAD-136 — `wp scan` report and CLI
+
+Status: Planned
+Phase: 11a
+Priority: High
+Related spec: [SPEC-016](specs/SPEC-016-wordpress-security-audit.md)
+Dependencies: AAD-132, AAD-133, AAD-134
+
+Goal:
+`aadoctor wp sites`, `aadoctor wp scan <site>`, `--json`, and a persisted report.
+
+Acceptance:
+- **A full scan performs zero writes under `/www/`** and changes no mode, owner
+  or timestamp — asserted by a byte-and-stat audit of a synthetic tree.
+- The report is written only under `/var/lib/aadoctor/wp-scans/`, atomically,
+  with a stable `finding_id` and the file's SHA-256 per finding.
+- Caps on files, depth, file size and wall clock; reaching one **truncates and
+  says so** in every rendering.
+- Symlinks are never followed out of the resolved site root; loops are detected;
+  one site's scan never reads another's files.
+- A filename containing control characters cannot forge a report line.
+- Exit 0 whatever is found; a `VERY_HIGH` finding triggers nothing.
+- Output never says "no findings" without saying what that does and does not
+  mean.
+
+---
+
+### AAD-140 — Quarantine
+
+Status: Planned
+Phase: 11b
+Priority: Medium
+Related spec: [SPEC-017](specs/SPEC-017-wordpress-quarantine-recovery.md)
+Dependencies: AAD-136, **ADR-010 accepted**
+
+Goal:
+Move one reviewed file into `/var/lib/aadoctor/quarantine/`, reversibly.
+
+Acceptance:
+- `[wordpress] allow_quarantine` defaults false; with it false **nothing is
+  written anywhere**.
+- The argument is a **finding id, never a path**. No glob, no `--all`.
+- The file's current hash must equal what the report recorded, or it is refused.
+- Core files, `wp-config.php`, the root `.htaccess`, directories and symlinks
+  are each refused.
+- Boundary enforced **after** path resolution; traversal, absolute paths and
+  symlinked components are refused and logged.
+- **Copy, fsync, re-hash, then unlink — never the reverse.** A failure injected
+  at any step leaves the original in place.
+- Cross-filesystem works: no `rename`.
+- Every action and **every refusal** is appended to the action log.
+- `--dry-run` writes nothing.
+
+---
+
+### AAD-141 — Quarantine listing
+
+Status: Planned
+Phase: 11b
+Priority: Low
+Related spec: [SPEC-017](specs/SPEC-017-wordpress-quarantine-recovery.md)
+Dependencies: AAD-140
+
+Goal:
+`aadoctor wp quarantine list`.
+
+Acceptance:
+- The directory is the index; no separate index file that could disagree.
+- Shows whether the original location is now occupied by something else — the
+  difference between a restore that will work and one that will be refused.
+
+---
+
+### AAD-142 — Restore
+
+Status: Planned
+Phase: 11b
+Priority: Medium
+Related spec: [SPEC-017](specs/SPEC-017-wordpress-quarantine-recovery.md)
+Dependencies: AAD-140
+
+Goal:
+Put a quarantined file back, byte for byte.
+
+Acceptance:
+- The quarantined copy is verified against its recorded hash first.
+- **A different file at the destination is refused, naming both hashes.** An
+  identical one is a no-op.
+- A missing parent directory is refused; aaDoctor does not recreate site
+  directories.
+- Mode and mtime restored; ownership that cannot be applied is **reported**, not
+  silently skipped.
+- The quarantine copy survives the restore.
+
+---
+
+### AAD-143 — Purge, and the uninstall interaction
+
+Status: Planned
+Phase: 11b
+Priority: Medium
+Related spec: [SPEC-017](specs/SPEC-017-wordpress-quarantine-recovery.md)
+Dependencies: AAD-140
+
+Goal:
+`aadoctor wp purge <id>`, and resolve the conflict with `uninstall --purge`.
+
+Acceptance:
+- **Accepts only a quarantine id**, never a path, and deletes only inside
+  `/var/lib/aadoctor/quarantine/`, verified after resolution.
+- An unknown id is refused, not a silent success.
+- The manifest is kept with `purged_at` set — the record is the point.
+- **`uninstall --purge` refuses while any entry is unrestored and unpurged**,
+  names the count and exits non-zero. Recorded in SPEC-001 too.
+
+---
+
+### Not planned, and not implied
+
+Deliberately absent from this phase, and not granted by ADR-010:
+
+```text
+delete a vulnerable plugin
+update a plugin
+disable a plugin or theme
+clean or edit malicious code inside a file
+restore a core file from an official source
+any automatic action at any risk level
+```
+
+Core restoration is the closest of these and is still a different capability:
+quarantine moves a file *out* and needs no external truth, while core
+restoration writes a file *in* and is only as trustworthy as where the
+replacement came from. It would need ADR-011 and its own spec, and it must not
+share the word `restore`.
+
+---
+
 ## Parking Lot
 
 Deferred on purpose. Each needs a decision, and usually an ADR, before moving up.
@@ -998,8 +1825,8 @@ here, so the phase reads as a whole. Currently done:
 - AAD-033 — Incident window correlation
 - AAD-034 — Incident JSON persistence
 
-Verified in a Linux container on Python 3.8 and 3.12: 449 unit tests, 42
-lifecycle checks, 32 release checks, and a synthetic `/www` tree unchanged in
+Verified in a Linux container on Python 3.8 and 3.12: 647 unit tests, 49
+lifecycle checks, 37 release checks, and a synthetic `/www` tree unchanged in
 content, permissions and ownership across install, purge, discovery, a live
 tailing run over a 200,000-line history, parsing aaPanel-shaped traffic, a
 three-site burst that `aadoctor top` reported correctly, and a load curve that

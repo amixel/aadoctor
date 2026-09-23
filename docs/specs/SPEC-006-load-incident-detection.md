@@ -317,6 +317,35 @@ snapshot holds 8,000 requests for the busiest site, 5,000 for the busiest path,
 4,620 for the busiest address, 120 responses of 502 and 40 upstream timeouts -
 in a 16 KB file that names no cause.
 
+## Planned extensions
+
+Five Draft specs attach factual blocks to the incident record this spec owns.
+Each is a new top-level key, none collides with an existing one, and
+`schema_version` rises once when they land:
+
+```text
+resources        SPEC-010    memory, swap, CPU, PSI, disk at start/peak/end
+processes        SPEC-011    bounded process tables at start/peak
+php_fpm          SPEC-013    pool configuration, worker counts, log events
+kernel_events    SPEC-014    OOM and kernel events inside the window
+coverage         SPEC-015    what was observable when the incident opened
+```
+
+Two properties of this spec are explicitly preserved by all of them:
+
+* **Load remains the only trigger.** No resource threshold, process state or
+  kernel event opens an incident. A second trigger would multiply the incident
+  population on a permanently pressed server, and the memory case that motivated
+  those specs already raises the load.
+* **The incident still records what was measured and names no cause.** Every new
+  block is factual; reading it is `diagnose`
+  ([SPEC-012](SPEC-012-system-deterministic-findings.md)).
+
+There is one peak instant, the one this spec already tracks. No new spec defines
+a second.
+
+---
+
 ## Out of scope
 
 - Cause attribution — [SPEC-007](SPEC-007-deterministic-rules.md).

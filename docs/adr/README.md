@@ -25,6 +25,21 @@ specs obey.
 | [ADR-006](ADR-006-deterministic-engine-before-ai.md) | Deterministic engine before AI | Accepted |
 | [ADR-007](ADR-007-aapanel-nginx-only-mvp.md) | aaPanel + Nginx only MVP | Accepted |
 | [ADR-008](ADR-008-minimum-python-version.md) | Minimum Python version 3.8 | Accepted |
+| [ADR-009](ADR-009-process-level-observation.md) | Process-level observation, and what is never persisted | Proposed |
+| [ADR-010](ADR-010-opt-in-filesystem-mutation-for-remediation.md) | Explicit opt-in filesystem mutation for WordPress remediation | Proposed |
+| [ADR-011](ADR-011-optional-outbound-network-for-security-reference-data.md) | Optional outbound network for security reference data | Proposed |
+
+ADR-010 **contradicts [ADR-001](ADR-001-non-invasive-read-only-architecture.md)**,
+which is `Accepted` and which already rejected optional remediation behind a
+confirmation flag. On acceptance it supersedes ADR-001, and accepting it
+requires writing ADR-001's successor in the same change — restating the full
+read-only guarantee with exactly that one carve-out. Accepting it alone would
+leave two `Accepted` ADRs whose decisions contradict each other.
+
+ADR-010 and ADR-011 are deliberately separate documents on separate axes:
+filesystem mutation and outbound network. Either could be accepted without the
+other, and bundling them would force one decision to carry the other's
+consequences.
 
 ---
 

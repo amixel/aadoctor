@@ -7,6 +7,17 @@ Last updated: 2026-09-23
 Phases 1 to 6 are complete, except for one check that needs a host with real
 systemd. Phase 7 (AI) is optional and deliberately not started.
 
+Phases 8 to 10 are **planned and documented, not started**: SPEC-010 to SPEC-015
+are Draft, and nothing in them exists in the repository. They close the gap the
+first production server exposed — see `Current objective`.
+
+Phase 11 — WordPress security — is **planned and documented, and its second half
+is blocked**. SPEC-016 (audit, read-only) and SPEC-017 (quarantine) are Draft.
+SPEC-017 contradicts ADR-001 and may not be implemented until ADR-010 is
+accepted; ADR-010 is `Proposed`. This is a second domain, not a continuation:
+security and performance stay apart, and no security finding ever enters a
+diagnosis.
+
 **The pipeline now answers the question the project exists for.** Load opens an
 incident, the incident freezes what the logs showed, and `aadoctor diagnose`
 reads that evidence and says which site, path, address or error is the probable
@@ -24,17 +35,34 @@ aaPanel -> discovery -> log tail -> parsing -> aggregation -> load
 for what that produced — it retired the two largest risks and cost nine
 defects, all of them found by reading real output.
 
-The objective now is narrower and needs a different machine. That server's load
-comes from memory pressure, not from HTTP, so it exercises only aaDoctor's
-ability to *decline* to name a culprit. Naming one correctly — the positive
-path, and the reason the project exists — is still unproven. It needs a server
-whose load genuinely comes from traffic.
+Field validation produced two objectives, and they are independent.
+
+**1. The core HTTP diagnosis is implemented and still unproven in the positive
+direction.** That server's load comes from memory pressure, not from HTTP, so it
+exercises only aaDoctor's ability to *decline* to name a culprit. Naming one
+correctly — the reason the project exists — needs a server whose load genuinely
+comes from traffic.
+
+**2. Field validation revealed a diagnostic gap the tool cannot close as
+built.** Twenty incidents in twelve hours, load to 43.6 per core, request rate
+flat or falling. The cause was memory pressure with roughly 1 MB/s of sustained
+swap on a 2 GB machine serving 25 sites, and a web-server log cannot show that
+by construction. aaDoctor was right every time and useful only negatively.
+
+Six Draft specs now cover that gap — system resources, process attribution,
+system findings, PHP-FPM pools, kernel events and diagnostic coverage. **The
+next planned work is SPEC-010.** Nothing in it is implemented; nothing below
+should be read as a capability that exists.
 
 ## Completed
 
 Documentation:
 
-- `README.md`, [/CLAUDE.md](../CLAUDE.md), 9 specs, 8 ADRs, backlog, changelog.
+- `README.md`, [/CLAUDE.md](../CLAUDE.md), 17 specs, 11 ADRs, backlog, changelog.
+  Nine specs are Implemented or In Progress; **SPEC-010 to SPEC-017 are Draft**
+  and describe work that does not exist yet. ADR-009, ADR-010 and ADR-011 are
+  `Proposed`, not accepted — and ADR-010 contradicts ADR-001, which is
+  `Accepted`, so that contradiction is live and recorded rather than resolved.
 - `LICENSE` — MIT, Alex Torres.
 
 Code (version `0.1.0-dev`), all of it committed and pushed:
@@ -98,10 +126,22 @@ Nothing.
 
 ## Not started
 
+- **SPEC-010 to SPEC-015 — system observability and diagnosis.** Draft only.
+  Memory, swap, CPU, I/O and PSI sampling; process attribution; the system
+  findings and the two-domain diagnosis; PHP-FPM pool discovery; kernel and OOM
+  events; and the coverage self-check. No collector, no rule and no command
+  exists for any of it. Backlog AAD-070 … AAD-122, all `Planned`.
+- **SPEC-016 and SPEC-017 — WordPress security.** Draft only. No scanner, no
+  quarantine, no command and no configuration key exists. Backlog AAD-130 …
+  AAD-143, all `Planned`. SPEC-016 is buildable today and needs no ADR; **all of
+  SPEC-017 is blocked on ADR-010**, which is `Proposed` and which contradicts
+  the `Accepted` ADR-001.
 - SPEC-009, the AI explainer. Optional by design, and deliberately held: it
   explains what the deterministic engine decided, so it should not be built
   until two or three real incidents show the engine decides well. An
-  explanation layer over unchecked answers only makes them more convincing.
+  explanation layer over unchecked answers only makes them more convincing —
+  and the engine is now planned to grow a whole second half, which makes the
+  case for waiting stronger, not weaker.
 - The first published release. `tools/package.sh` builds the artifact; nothing
   has been tagged or uploaded. `VERSION` still reads `0.1.0-dev`.
 
@@ -162,6 +202,24 @@ Nothing.
   what the first server did, and it is expected: load is a trigger, not a
   diagnosis. The rule thresholds still decide *what gets named*, and that is
   the part no server has exercised yet.
+- **The planned system thresholds are weaker than the traffic ones.** SPEC-012
+  defines sixteen numbers and exactly one of them has any observation behind it
+  — the 512 KB/s swap-out floor, derived from the single server that motivated
+  the work. The rest are judgement. When that spec is implemented it will add a
+  second way for aaDoctor to be confidently wrong, on a class of evidence that
+  sounds more authoritative than a traffic share because it comes from the
+  kernel. The defences planned are the ones that already worked once: a system
+  anchor rule, caps on projections, and two scores that are never added.
+- **The planned security work can damage a site, which nothing else here can.**
+  SPEC-016 is read-only and safe by construction, but its signal weights are the
+  least validated numbers ever written into this project and will produce false
+  positives on first contact with real sites. SPEC-017 then makes a false
+  positive actionable. The defences planned are the ones that make the action
+  reversible — copy-verify-unlink, a finding id instead of a path, a hash that
+  must still match, core files refused outright — and none of them has met a
+  real server. **The first real scan should be treated the way the first
+  production server was: as the instrument that finds the defects**, not as a
+  result.
 - **A wrong answer is worse than no answer.** The engine will put a site, a
   path and an address on the screen with a confidence next to them. The
   defences against a false positive — minimum volume, the anchor requirement,
@@ -196,21 +254,37 @@ Nothing.
 
 ## Next recommended work
 
-1. **Install on a real aaPanel server.** `aadoctor doctor`, `aadoctor sites`,
-   then the daemon for a day, then `aadoctor top`, `aadoctor incidents` and
-   `aadoctor diagnose` on whatever it recorded. Three things get answered:
-   whether the real `log_format` parses, whether `trigger_per_cpu = 1.0` is a
-   sensible line on that machine, and — the new one — whether the diagnosis it
-   produces is the one an administrator would have reached by hand.
+Step 1 of the previous list — *install on a real aaPanel server* — is **done**,
+on 2026-09-22. What it answered, and what it opened, is in `Current objective`
+and `Known risks`.
+
+1. **SPEC-010 — system resource monitoring.** The first of the six new drafts
+   and the one the rest rest on. Small, self-contained, no new dependency, and
+   on its own it already lets `status` say that a machine is out of memory.
+   SPEC-011 needs its denominators; SPEC-012 needs both. It is first because it
+   addresses the gap the field actually found, and because it does not depend on
+   finding a particular kind of server.
 2. On a Linux host with systemd: `./install.sh`, `aadoctor enable`, confirm the
    unit is active, `aadoctor disable`, `aadoctor uninstall --purge`. Closes
-   AAD-004 and Phase 1.
-3. Tag `v0.1.0` and attach both files produced by `tools/package.sh` — **after**
-   step 1, not before. Decided deliberately: the first server is installed from
-   a checkout, which `install.sh` supports and the lifecycle script exercises.
-   Pinning a version number before any field data would most likely pin one
-   that needs correcting in its first week.
-4. SPEC-009, the AI explainer — last, and optional.
+   AAD-004 and Phase 1. Independent of everything else here.
+3. **A server whose load comes from HTTP.** The positive path — naming a site
+   with high confidence — is still unproven, and no amount of further building
+   proves it. This is a waiting item, not a work item, and it should not block
+   step 1.
+4. SPEC-011, then SPEC-012 — process attribution and the system findings. After
+   SPEC-012 the tool can answer the memory case end to end.
+5. Tag `v0.1.0` and attach both files produced by `tools/package.sh`. Deferred
+   deliberately: the first server is installed from a checkout, which
+   `install.sh` supports and the lifecycle script exercises, and pinning a
+   version before the system half exists would pin one that needs correcting
+   almost immediately.
+6. SPEC-013, SPEC-014, SPEC-015 — PHP-FPM pools, kernel events, coverage.
+   SPEC-014 is independent of SPEC-010 and SPEC-011 and can move earlier if an
+   OOM turns out to be the common case.
+7. SPEC-009, the AI explainer — last, and optional.
 
-Step 1 is no longer just useful, it is the gate. Everything up to here can be
-checked against a fixture; whether the answers are *right* cannot.
+The gate has moved. Everything up to SPEC-008 could be checked against a
+fixture, and step 1 of the old list proved that is not enough — nine defects,
+none found by a test, seven of them in what the tool *said*. The new specs are
+larger and less validated than anything before them, so the standard is the
+same: real output, read by a person, before any of it is believed.

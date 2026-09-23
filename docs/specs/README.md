@@ -36,7 +36,32 @@ Do not repeat the README inside a spec. Reference it.
 | [SPEC-006](SPEC-006-load-incident-detection.md) | Load incident detection | Implemented |
 | [SPEC-007](SPEC-007-deterministic-rules.md) | Deterministic rules | Implemented |
 | [SPEC-008](SPEC-008-cli-reporting.md) | CLI reporting | In Progress |
-| [SPEC-009](SPEC-009-ai-explainer.md) | AI explainer | Draft |
+| [SPEC-009](SPEC-009-ai-explainer.md) | AI explainer | Draft (deferred) |
+| [SPEC-010](SPEC-010-system-resource-monitoring.md) | System resource monitoring — memory, swap, CPU, I/O, PSI and disk sampled from `/proc`, frozen into the incident | Draft |
+| [SPEC-011](SPEC-011-process-attribution.md) | Process attribution — a bounded table of which process families held CPU, memory and I/O under pressure | Draft |
+| [SPEC-012](SPEC-012-system-deterministic-findings.md) | System deterministic findings — the system-level rules, and how an HTTP cause and a resource cause are told apart | Draft |
+| [SPEC-013](SPEC-013-php-fpm-pressure-and-pool-discovery.md) | PHP-FPM pressure and pool discovery — versions, pools, `pm.max_children`, saturation, read-only | Draft |
+| [SPEC-014](SPEC-014-host-kernel-events.md) | Host / kernel events — OOM kills, segfaults and filesystem errors, from `/dev/kmsg`, with no subprocess | Draft |
+| [SPEC-015](SPEC-015-diagnostic-coverage-self-check.md) | Diagnostic coverage / self-check — what aaDoctor can observe on this server, and which negatives it may state | Draft |
+
+| [SPEC-016](SPEC-016-wordpress-security-audit.md) | WordPress security audit — detect installations, verify core integrity, find suspicious files, inventory plugins and themes. **Read-only** | Draft |
+| [SPEC-017](SPEC-017-wordpress-quarantine-recovery.md) | WordPress quarantine and recovery — reversible removal of a reviewed file, restore and purge. **Writes under `/www/`; blocked on ADR-010** | Draft (blocked) |
+
+SPEC-010 to SPEC-015 close the gap the first production server exposed: a load
+rise caused by a host resource was invisible, and indistinguishable from a load
+rise with no cause in the logs. They are drafts — nothing in them is
+implemented, and the thresholds in SPEC-012 are less validated than any number
+already in the project.
+
+SPEC-016 and SPEC-017 open a **second domain**: security rather than
+performance. They are deliberately split, because SPEC-016 is read-only like
+everything before it and SPEC-017 is the first thing in the project that writes
+under `/www/wwwroot/`. SPEC-017 **must not be implemented until ADR-010 is
+accepted** — it contradicts ADR-001, which is currently `Accepted` and which
+already rejected this exact proposal once.
+
+Security output never enters `diagnose`. Malware found does not mean it caused
+the load, and a site that caused the load is not thereby infected.
 
 This table is part of the spec that changes status, not a separate chore: a
 stale index is worse than no index.
@@ -89,6 +114,21 @@ Acceptance criteria
 Verification
 Out of scope
 ```
+
+SPEC-010 onwards add three more, and a spec that needs them uses them rather
+than folding the content somewhere it does not belong:
+
+```text
+Performance constraints          a concrete budget, when the work has a cost
+                                 that could make aaDoctor the outage
+Incident impact                  what this spec adds to the incident record
+Interactions with existing specs what it requires of them, and what it reuses
+```
+
+The last one is not decoration. A change another spec must make is recorded
+**in that spec too**, as a `Planned extension`, so the two cannot drift and
+nobody resolves the difference silently in code ([/CLAUDE.md](../../CLAUDE.md)
+§1).
 
 Notes on the ones that are easy to get wrong:
 

@@ -346,6 +346,46 @@ None. Read-only against `/var/lib/aadoctor/`.
 - A filesystem audit during a full command sweep, asserting no writes.
 - A width test at 80 columns and a pipe test asserting no control characters.
 
+## Planned extensions
+
+Three Draft specs change output defined here. Recorded so the contract and the
+plans cannot drift:
+
+* **[SPEC-012](SPEC-012-system-deterministic-findings.md)** — `diagnose` gains
+  `SYSTEM`, `PROCESS` and `SYSTEM EVIDENCE` sections, and every existing section
+  marks which domain each row belongs to.
+* **[SPEC-015](SPEC-015-diagnostic-coverage-self-check.md)** — `doctor` gains a
+  `DIAGNOSTIC COVERAGE` section plus `--coverage` and `--json`. A coverage gap
+  **never** changes `doctor`'s exit code: a server without PSI is a server
+  aaDoctor works on.
+* **[SPEC-010](SPEC-010-system-resource-monitoring.md)** — `status` gains one
+  resource line when the daemon has published a sample.
+
+* **[SPEC-016](SPEC-016-wordpress-security-audit.md)** and
+  **[SPEC-017](SPEC-017-wordpress-quarantine-recovery.md)** — a new `wp` command
+  group, the first subcommand group in the project, reusing the output
+  conventions and exit codes defined here. SPEC-017 adds exit code `6`, refused
+  by a safety rule: "refused because it would have broken your site" is not a
+  usage error and must be distinguishable in a script.
+
+  The group is namespaced deliberately. **Security output never appears in
+  `diagnose`, `top`, `status` or `show`**, and no security finding enters a
+  diagnosis score. Malware found does not mean it caused the load, and a site
+  that caused the load is not thereby infected.
+
+One sentence defined above becomes **wrong** and must be rewritten with
+SPEC-012, not after it. The inconclusive report currently closes by naming I/O,
+a backup, a remote database and a process owned by no site as things that could
+never appear in a web log. Three of those four become observable. Left as it is,
+the tool would be listing its own capabilities as blind spots — and, worse,
+would print "no clear cause identified" while holding the answer.
+
+The distinction that replaces it: **"we looked at the host resources and they
+were fine" and "we could not look" are opposite statements**, and the report must
+never render them identically.
+
+---
+
 ## Out of scope
 
 - `explain` behavior — [SPEC-009](SPEC-009-ai-explainer.md).

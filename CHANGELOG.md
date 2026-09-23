@@ -187,8 +187,94 @@ No version has been released yet. The current source tree is `0.1.0-dev`.
   Only `/proc/loadavg` is substituted. It refuses to run outside a container,
   and refuses to touch a `/www` it did not create.
 - ADR-008: minimum Python version 3.8, resolving the TBD in README §88.
+- **Documentation and roadmap only — SPEC-010 to SPEC-015, all `Draft`.** Six
+  specs planning the diagnosis of load that does not come from HTTP, which the
+  first production server showed the tool cannot currently explain. **No
+  collector, no rule, no command and no configuration key was implemented or
+  changed by this work; nothing described in these specs exists in the
+  repository.**
+  - SPEC-010 — System Resource Monitoring: memory, swap, CPU, iowait, PSI and
+    disk sampled from `/proc` and `os.statvfs()`, cumulative counters turned
+    into rates, a capped ring of samples, and `start`/`peak`/`end` frozen into
+    the incident. Load remains the only trigger.
+  - SPEC-011 — Process Attribution: a two-phase, bounded scan of `/proc/<pid>/`
+    that runs only under pressure, grouped into process families, matched
+    between scans by `(pid, starttime)` so a reused pid cannot invent a CPU
+    figure.
+  - SPEC-012 — System Deterministic Findings: thirteen findings on SPEC-007's
+    existing confidence scale, a system anchor rule, and a diagnosis with two
+    domains whose scores are **never added** — a site and a resource are not
+    comparable quantities.
+  - SPEC-013 — PHP-FPM Pressure and Pool Discovery: read-only discovery of PHP
+    versions, pools and `pm.max_children`, with saturation detected by counting
+    workers and reading the PHP-FPM log rather than by enabling a status page.
+  - SPEC-014 — Host / Kernel Events: OOM kills, segfaults and filesystem errors
+    read incrementally from `/dev/kmsg`, **with no subprocess**. `/proc/kmsg` is
+    rejected because reading it consumes messages other software depends on.
+  - SPEC-015 — Diagnostic Coverage / Self-Check: a `DIAGNOSTIC COVERAGE`
+    section in `doctor` answering what aaDoctor can observe on this server, and
+    constraining which negatives the diagnosis is allowed to state.
+- ADR-009 (**`Proposed`**, not accepted): process-level observation, and the
+  rule that no command line is ever persisted, logged or printed — with one
+  anchored exception for the PHP-FPM pool label. `/proc/<pid>/environ` is never
+  opened.
+- BACKLOG: phases 8 (system observability), 9 (system diagnosis) and 10
+  (coverage and hardening), AAD-070 … AAD-122, all `Planned`. Phase 7 keeps its
+  number and is skipped in time, not cancelled.
+- **Documentation and roadmap only — SPEC-016 and SPEC-017, both `Draft`.**
+  WordPress security, split into two specs on purpose. **No scanner, no
+  quarantine, no command and no configuration key was implemented; nothing
+  described in them exists in the repository, and no file under `/www/` can be
+  written by any code that exists today.**
+  - SPEC-016 — WordPress Security Audit: **100% read-only**. Detects
+    installations by `wp-includes/version.php` rather than by directory name,
+    treats the declared version as a claim to be corroborated, compares core
+    files by content against a manifest, and scores suspicious files across five
+    independent evidence categories — so `eval()` alone can never exceed `LOW`.
+    Nothing is executed, no database is opened, and **no value from
+    `wp-config.php` reaches a report**, only line numbers and pattern names.
+  - SPEC-017 — WordPress Quarantine and Recovery: reversible removal of one
+    file named by a **reviewed finding id, never a path**, whose hash must still
+    match what the scan recorded. Copy, fsync, re-hash, then unlink — never the
+    reverse. Core files, `wp-config.php`, the root `.htaccess`, directories and
+    symlinks are refused outright. Nothing is ever automatic at any risk level.
+- **Core integrity reference data is a three-tier model whose default is no
+  network.** Without a manifest, integrity is reported `UNAVAILABLE` naming the
+  version it needed — never as a clean core. Same rule for the vulnerability
+  feed: absent or stale never renders as "no known vulnerabilities".
+- ADR-010 (**`Proposed`**): explicit opt-in filesystem mutation for WordPress
+  remediation. **It contradicts ADR-001, which is `Accepted` and which already
+  rejected this exact proposal.** On acceptance it supersedes ADR-001, and
+  accepting it requires writing ADR-001's successor in the same change.
+- ADR-011 (**`Proposed`**): optional outbound network for security reference
+  data. A separate document on a separate axis, because either decision could be
+  taken without the other.
+- BACKLOG: phase 11, AAD-130 … AAD-143, all `Planned`. 11a (audit) is buildable
+  and needs no ADR; **11b (quarantine) is blocked on ADR-010**. A
+  `Not planned, and not implied` section records what ADR-010 deliberately does
+  not grant: plugin deletion, updates, deactivation, code cleaning, core
+  restoration and any automatic action.
 
 ### Changed
+- Existing specs gained `Planned extension` notes recording what the new drafts
+  will require of them, so the two cannot drift. No current behavior changed.
+  SPEC-002 will capture one more field from a vhost line it already reads — the
+  PHP marker — **without** starting to follow `include`. SPEC-006 lists the five
+  factual blocks that will attach to the incident record and restates that load
+  stays the only trigger. SPEC-007 lists what SPEC-012 reuses unchanged, and
+  that the two domain scores are never added. SPEC-008 records that its
+  inconclusive closing paragraph becomes **wrong** once host resources are
+  observable — it currently names I/O, backups and unowned processes as
+  invisible, and three of those four stop being so.
+- SPEC-009 is now explicitly marked deferred until deterministic system
+  diagnostics are field-validated. Its contents are unchanged.
+- Two further `Planned extension` notes, from the security specs. SPEC-002 must
+  also capture the vhost `root` directive — without it there is no filesystem
+  path for a site and nothing to scan. SPEC-001 records a **real conflict**:
+  `uninstall --purge` removes `/var/lib/aadoctor/`, which after SPEC-017 can
+  hold the only copy of a file removed from a live site, so it must refuse while
+  the quarantine is non-empty. SPEC-008 records the new `wp` command group, the
+  project's first, and exit code `6` for a refusal by a safety rule.
 - SPEC-001 to SPEC-007 moved from `Draft` to `Implemented`, with implementation
   notes. SPEC-006 gained two corrections: hysteresis replaced the cooldown it
   specified, and an incident no longer depends on the rules engine to exist. SPEC-004's error classification table was renamed to lowercase kinds

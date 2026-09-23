@@ -351,6 +351,36 @@ Still required on a host with real systemd, which a container cannot provide:
 install, `aadoctor enable`, confirm the unit is active, `aadoctor disable`,
 `aadoctor uninstall --purge`.
 
+## Planned extension
+
+[SPEC-017](SPEC-017-wordpress-quarantine-recovery.md) (Draft, blocked on
+ADR-010) creates a real conflict with `uninstall --purge`, recorded here rather
+than left for whoever implements it to discover.
+
+`--purge` removes `/var/lib/aadoctor/` entirely, on the documented promise that
+it deletes only aaDoctor's own data (README §54). After SPEC-017 that directory
+can hold `quarantine/<site>/<id>/file` — **the only copy of a file removed from
+a live site**. Purging would destroy it permanently, which is not what the
+promise means and not what anyone running the command expects.
+
+Resolution, to be implemented with SPEC-017 and not after it:
+
+```text
+uninstall --purge REFUSES while the quarantine holds any entry that has
+not been restored or purged. It names the count, points at
+`aadoctor wp quarantine list`, and exits non-zero.
+```
+
+If a `--force-quarantine` escape is offered at all, it must state how many files
+will be destroyed and require them to be named. **TBD**, and the default answer
+is no.
+
+Nothing about this spec's current behavior changes until SPEC-017 leaves Draft.
+Today `/var/lib/aadoctor/` holds only offsets, incidents and runtime state, all
+of which are reproducible and none of which exists anywhere else.
+
+---
+
 ## Out of scope
 
 - Versioned rollback — Parking Lot.

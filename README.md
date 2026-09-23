@@ -285,6 +285,41 @@ loadavg
 
 Podem ser utilizadas algumas métricas simples de `/proc` para contexto.
 
+## 6.1. Recursos do host
+
+O primeiro servidor real mostrou o limite desse escopo. Em doze horas foram
+detectados vinte incidentes, com load chegando a 43.6 por core, enquanto o
+tráfego HTTP estava estável ou caindo. Todos os diagnósticos ficaram
+corretamente inconclusivos: a causa era pressão de memória com swap sustentado,
+e isso **não aparece em log de servidor web por construção**.
+
+Por isso o escopo se amplia de "algumas métricas para contexto" para observação
+medida do host:
+
+```text
+memória e swap
+CPU e iowait
+pressure stall information
+disco e inodes
+processos sob pressão
+eventos de kernel e OOM
+PHP-FPM: pools e limites
+```
+
+Sempre lendo `/proc`, `/sys` e `os.statvfs()`, sempre read-only, sempre sem
+dependência externa e sem subprocesso em loop (§58).
+
+Isso **não** transforma o aaDoctor em ferramenta de monitoramento. Nada é
+armazenado como série temporal, nada é exportado, nada é graficado: as amostras
+existem para explicar um incidente e são congeladas dentro dele. O que está no
+§7 continua fora de escopo.
+
+O aaDoctor continua observador (§3.1, §90). Ele pode dizer que a memória
+acabou. Ele não reduz `pm.max_children`, não desliga swap, não limpa cache e
+não reinicia nada.
+
+Detalhamento em SPEC-010 a SPEC-015 (§84).
+
 ---
 
 # 7. Fora do escopo inicial
@@ -2530,6 +2565,50 @@ Implementar:
 aadoctor explain <incident>
 ```
 
+A Phase 7 mantém o número e foi adiada no tempo, não cancelada. As fases 8 a 10
+vêm antes dela: a IA explica o que o motor determinístico decidiu, e o motor
+está prestes a ganhar uma metade inteiramente nova.
+
+---
+
+## Phase 8 — System observability
+
+Ver §6.1. Medir o host, sem concluir nada ainda:
+
+```text
+SPEC-010   memória, swap, CPU, iowait, PSI, disco
+SPEC-011   atribuição por processo, sob pressão apenas
+```
+
+---
+
+## Phase 9 — System diagnosis
+
+```text
+SPEC-012   findings de sistema e diagnóstico em dois domínios
+SPEC-013   PHP-FPM: pools, pm.max_children, saturação
+SPEC-014   eventos de kernel e OOM
+```
+
+---
+
+## Phase 10 — Coverage / hardening
+
+```text
+SPEC-015   o que o aaDoctor consegue observar neste servidor
+```
+
+---
+
+## Phase 11 — WordPress Security
+
+Domínio separado do diagnóstico de performance.
+
+```text
+11a  SPEC-016   auditoria, read-only
+11b  SPEC-017   quarentena e restauração, bloqueada até ADR-010 ser aceito
+```
+
 ---
 
 # 84. Especificações previstas
@@ -2561,6 +2640,52 @@ SPEC-008-CLI-REPORTING.md
 
 SPEC-009-AI-EXPLAINER.md
 ```
+
+Depois da validação em campo (§6.1), em `Draft`:
+
+```text
+SPEC-010-SYSTEM-RESOURCE-MONITORING.md
+
+SPEC-011-PROCESS-ATTRIBUTION.md
+
+SPEC-012-SYSTEM-DETERMINISTIC-FINDINGS.md
+
+SPEC-013-PHP-FPM-PRESSURE-AND-POOL-DISCOVERY.md
+
+SPEC-014-HOST-KERNEL-EVENTS.md
+
+SPEC-015-DIAGNOSTIC-COVERAGE-SELF-CHECK.md
+```
+
+Segurança de WordPress, em `Draft`:
+
+```text
+SPEC-016-WORDPRESS-SECURITY-AUDIT.md
+
+SPEC-017-WORDPRESS-QUARANTINE-RECOVERY.md
+```
+
+As duas são separadas de propósito. A **SPEC-016 é 100% read-only**, como todo o
+resto do projeto: ela inspeciona e relata, e não altera arquivo nenhum.
+
+A **SPEC-017 rompe deliberadamente a garantia do §4** — é a primeira coisa no
+projeto que escreve dentro de `/www/wwwroot/`. Por isso ela depende de um ADR
+próprio (ADR-010, ainda `Proposed`) e **não pode ser implementada enquanto ele
+não for aceito**. Mesmo aceito, nada é automático: nenhum nível de risco,
+inclusive `VERY HIGH`, move arquivo sozinho. Sempre um comando humano explícito,
+sempre um arquivo por vez, sempre reversível.
+
+Acesso de rede para checksums oficiais e inteligência de vulnerabilidades é
+outro eixo, com ADR separado (ADR-011, `Proposed`). **Por padrão o aaDoctor
+continua sem rede**, e a auditoria funciona sem ela — o que não pode ser
+verificado é reportado como indisponível, nunca como limpo.
+
+Segurança **não** se mistura com `diagnose` (§42). Malware encontrado não
+significa que ele causou o load, e site que causou o load não está por isso
+infectado.
+
+O índice com status de cada spec está em
+[docs/specs/README.md](docs/specs/README.md).
 
 ---
 

@@ -162,6 +162,20 @@ truncate
 This is not a style preference. It is the guarantee the project is built on.
 See [ADR-001](docs/adr/ADR-001-non-invasive-read-only-architecture.md).
 
+**The rule above is in force today and there is no exception to it.**
+
+[SPEC-017](docs/specs/SPEC-017-wordpress-quarantine-recovery.md) proposes one —
+moving a reviewed malicious file out of a site — and it is `Draft` and
+**blocked**. It contradicts ADR-001, which is `Accepted`. The contradiction is
+recorded deliberately, in
+[ADR-010](docs/adr/ADR-010-opt-in-filesystem-mutation-for-remediation.md),
+which is `Proposed`.
+
+Do not resolve that contradiction in code, and do not "fix" either document to
+agree with the other. Until ADR-010 is accepted, and ADR-001's successor written
+with it, nothing in SPEC-017 may be implemented and this section stands
+unchanged.
+
 ---
 
 ## 8. Service rule

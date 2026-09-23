@@ -655,6 +655,29 @@ now described in place above.
   evidence at all, aggregates do not survive a restart, and counts can be
   slightly high after a crash.
 
+## Planned extension
+
+[SPEC-012](SPEC-012-system-deterministic-findings.md) (Draft) adds system-level
+findings — memory, swap, CPU, I/O, disk, processes, PHP-FPM pools, OOM — on top
+of this spec rather than beside it. What it reuses, unchanged:
+
+* the scoring functions `strength()` and `volume_factor()`, and the level bands;
+* the level multipliers used when weighting evidence;
+* the `not_evaluable` mechanism, and the rule that a rule which could not be
+  decided is reported rather than dropped;
+* the **anchor principle** — there, a process family is named only when a
+  host-level finding for the same resource also fired;
+* the scoped-quality-cap principle, extended by
+  [SPEC-015](SPEC-015-diagnostic-coverage-self-check.md) to observability.
+
+What changes here: `ruleset_version` increments, the facts reader learns to read
+the new incident blocks defensively, and the diagnosis gains a second domain.
+**The site score defined in this spec is not altered, and the two domain scores
+are never added** — a site and a resource are not comparable quantities, and one
+number ranking them would mean nothing.
+
+---
+
 ## Out of scope
 
 - `BOT_OR_CRAWLER_SPIKE`, `PHP_MEMORY_EXHAUSTED`, `PHP_EXECUTION_TIMEOUT` as

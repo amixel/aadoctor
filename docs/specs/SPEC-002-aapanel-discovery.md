@@ -313,6 +313,28 @@ Automated, in a disposable Linux container:
 Not yet verified: a real aaPanel installation. The fixtures follow aaPanel's
 formatting conventions but were written by hand.
 
+## Planned extension
+
+[SPEC-013](SPEC-013-php-fpm-pressure-and-pool-discovery.md) (Draft) needs **one
+additional field** captured from the vhost files this spec already parses: the
+PHP marker, either `include enable-php-NN.conf` or a `fastcgi_pass` target
+naming a version. Both are visible on the line itself, so **the rule that
+`include` is not followed is preserved** — only the filename is read, never its
+contents.
+
+Recorded here rather than left in SPEC-013 alone, so the two documents cannot
+drift. Nothing about this spec's current behavior changes until SPEC-013 leaves
+Draft.
+
+[SPEC-016](SPEC-016-wordpress-security-audit.md) (Draft) needs a second
+additional field: the **`root` directive**, which this spec does not capture
+today. Without it there is no filesystem path for a site and nothing to scan.
+It is one more entry in the directive table that discovery already walks, and
+it is read for its value only — no path is resolved, followed or opened by this
+spec.
+
+---
+
 ## Out of scope
 
 - aaPanel database or API access.
