@@ -229,6 +229,79 @@ class ErrorConcentrationScenario(unittest.TestCase):
         self.assertIsNone(self.result.primary_path)
 
 
+class LoadWithoutMoreTraffic(unittest.TestCase):
+    """The load multiplied; the request rate did not.
+
+    From the first night in production: twelve incidents overnight on a
+    2-CPU server, peaks of 20 to 44 per core, and a request rate under
+    1.5/s throughout. The rules named the busiest site at MEDIUM, which is
+    a true statement about the logs and reads as an explanation of the load.
+    """
+
+    def build(self, severity="critical", recent=400, earlier=1_600):
+        total = recent + earlier
+        sites = [
+            fixtures.site("busy.com.br", int(total * 0.72), total,
+                          paths=[("/", 300)], ips=[("162.158.103.126", 840)],
+                          statuses={"200": int(total * 0.72)}),
+            fixtures.site("other.com.br", total - int(total * 0.72), total,
+                          paths=[("/", 100)], statuses={"200": 200}),
+        ]
+        long = fixtures.window(300, total_requests=total, per_site=sites,
+                               statuses={"200": total})
+        short = fixtures.window(60, total_requests=recent, statuses={"200": recent})
+        return fixtures.incident(peak={"60": short, "300": long},
+                                 cpu_count=2, peak_load=87.27, severity=severity)
+
+    def test_the_steady_rate_is_reported(self):
+        result = diagnosis.diagnose(self.build())
+
+        self.assertIs(result.traffic_rose, False)
+        self.assertIn("request rate held steady", result.summary)
+        self.assertIn("43.63 per core", result.summary)
+
+    def test_it_does_not_claim_the_traffic_is_innocent(self):
+        # A single expensive request can pin a core, and aaDoctor cannot see
+        # what a request costs. The note must not overreach in the other
+        # direction either.
+        summary = diagnosis.diagnose(self.build()).summary
+
+        self.assertIn("may still be what the requests cost", summary)
+        self.assertNotIn("not caused by", summary)
+
+    def test_the_findings_are_left_alone(self):
+        # This is context, not a cap. What the rules found stays found.
+        result = diagnosis.diagnose(self.build())
+        self.assertIn(builtin.ONE_SITE_DOMINATING, codes(result.findings))
+
+    def test_a_real_traffic_spike_gets_no_such_note(self):
+        result = diagnosis.diagnose(self.build(recent=4_000, earlier=400))
+
+        self.assertIs(result.traffic_rose, True)
+        self.assertNotIn("held steady", result.summary)
+
+    def test_a_mild_incident_gets_no_such_note(self):
+        # Worth saying when the load is extreme and unexplained; noise on an
+        # incident that barely crossed the threshold.
+        result = diagnosis.diagnose(self.build(severity="high"))
+        self.assertNotIn("held steady", result.summary)
+
+    def test_no_baseline_means_no_claim_either_way(self):
+        record = fixtures.incident(
+            peak=fixtures.one_window(fixtures.window(300, total_requests=500)),
+            cpu_count=2, peak_load=87.27)
+        result = diagnosis.diagnose(record)
+
+        self.assertIsNone(result.traffic_rose)
+        self.assertNotIn("held steady", result.summary)
+
+    def test_it_travels_in_the_json(self):
+        payload = diagnosis.diagnose(self.build()).as_dict()
+
+        self.assertIs(payload["diagnosis"]["traffic_rose"], False)
+        self.assertIsNotNone(payload["diagnosis"]["traffic_ratio"])
+
+
 class Scoring(unittest.TestCase):
     def test_a_stronger_finding_is_worth_more_than_a_weaker_one(self):
         strong = rules.Finding(code=builtin.ONE_SITE_DOMINATING, confidence=0.95)

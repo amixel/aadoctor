@@ -537,6 +537,7 @@ rules, and which those were has to be visible.
 | Error log unreadable or absent | Error rules report `no_error_log_data` — never read as an absence of errors |
 | Only intra-site findings | No site is named; the findings are still listed |
 | Volume below the guard and no finding at all | The summary says there was too little traffic to judge — **not** that the logs showed nothing |
+| A critical load with a request rate that did not rise | The site is still named, and the summary says the request count does not account for the load |
 | Findings pointing at different sites | Score taken net; both sites named; confidence falls |
 | An incident still open | Diagnosed from the peak snapshot; the status is shown |
 | An incident file from an older build | Read defensively; missing fields become absences, never exceptions |
@@ -638,6 +639,7 @@ now described in place above.
 | Evidence score scaled by each finding's strength | a finding at the threshold is not worth one at four times it |
 | Some evidence fields dropped | raw query strings, per-IP paths, 404 paths and message samples are not in the data |
 | Two distinct inconclusive answers, worded differently | found in production: an incident opening seconds after the daemon starts has no traffic to judge, and saying "the logs show nothing" there is a claim the data does not support |
+| A steady request rate is reported next to a critical load | found in production: twelve overnight incidents peaking at 20–44 per core with the request rate flat under 1.5/s. The rules can only rank what is in the logs, so on a quiet server they name a crawler or the busiest small site — and that reads as an explanation |
 
 ## Known limitations
 

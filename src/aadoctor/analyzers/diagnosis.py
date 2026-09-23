@@ -149,6 +149,14 @@ class Diagnosis:
     scores: Dict[str, float] = field(default_factory=dict)
     caps: List[str] = field(default_factory=list)
 
+    #: Whether the request rate rose during the incident, when that can be
+    #: told at all. False is the interesting value: a load that multiplied
+    #: while the request rate held steady is a load the request count does not
+    #: account for, and the reader has to be told before going to look at a
+    #: site the rules named.
+    traffic_rose: Optional[bool] = None
+    traffic_ratio: Optional[float] = None
+
     summary: str = ""
     facts: Optional[Facts] = None
     quality: Optional[Quality] = None
@@ -184,6 +192,10 @@ class Diagnosis:
                 "associated_ip": self.associated_ip,
                 "error_site": self.error_site,
                 "traffic_site": self.traffic_site,
+                "traffic_rose": self.traffic_rose,
+                "traffic_ratio": (
+                    round(self.traffic_ratio, 2) if self.traffic_ratio is not None else None
+                ),
                 "score": round(self.score, 2),
                 "site_scores": {
                     name: round(value, 2)
@@ -236,12 +248,19 @@ def diagnose(incident: Any, thresholds: Optional[Thresholds] = None) -> Diagnosi
         thresholds=limits.as_dict(),
     )
 
+    diagnosis.traffic_ratio = facts.traffic_ratio
+    # Evaluated and did not fire, rather than never evaluated at all.
+    evaluated = TRAFFIC_SPIKE not in {item.code for item in blocked}
+    if evaluated and diagnosis.traffic_ratio is not None:
+        diagnosis.traffic_rose = any(f.code == TRAFFIC_SPIKE for f in findings)
+
     scores = _score_sites(findings)
     diagnosis.scores = scores
 
     winner = _winner(scores)
     if winner is None:
         diagnosis.summary = _inconclusive_summary(facts, findings, blocked, limits, None)
+        diagnosis.summary += _steady_traffic_note(diagnosis)
         return diagnosis
 
     # Net of everything pointing elsewhere. Disagreement lowers confidence by
@@ -278,7 +297,40 @@ def diagnose(incident: Any, thresholds: Optional[Thresholds] = None) -> Diagnosi
         diagnosis.confidence = 0.0
         diagnosis.summary = _inconclusive_summary(facts, findings, blocked, limits, winner)
 
+    diagnosis.summary += _steady_traffic_note(diagnosis)
     return diagnosis
+
+
+def _steady_traffic_note(diagnosis: Diagnosis) -> str:
+    """Say when the load multiplied and the request rate did not.
+
+    The rules can only rank what is in the logs, and on a quiet server the
+    strongest thing in the logs is still something - a crawler, a scanner, the
+    busiest of several small sites. Naming it next to a load of 43 per core
+    reads as an explanation, and at eight in the morning during an outage
+    somebody will go and look at that site.
+
+    So when the request rate held steady through the incident, say it. That is
+    not a claim about the cause: a single expensive request can pin a core, and
+    aaDoctor cannot see what a request costs. It is the one thing the data does
+    support - the *number* of requests did not change - and it is exactly what
+    stops a plausible answer being taken for a confirmed one.
+    """
+    if diagnosis.traffic_rose is not False or diagnosis.traffic_ratio is None:
+        return ""
+
+    facts = diagnosis.facts
+    if facts is None or facts.severity != "critical":
+        return ""
+
+    return (
+        " Note: the request rate held steady through this incident (%.1fx the "
+        "preceding period) while the load reached %.2f per core. The number of "
+        "requests does not account for that. It may still be what the requests "
+        "cost, which aaDoctor cannot see - or something outside the web server "
+        "entirely."
+        % (diagnosis.traffic_ratio, facts.peak_load_per_cpu)
+    )
 
 
 def _anchored(findings: List[Finding], site: str) -> bool:

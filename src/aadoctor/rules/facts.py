@@ -204,6 +204,23 @@ class Facts:
         return self.total_requests / self.effective_seconds
 
     @property
+    def traffic_ratio(self) -> Optional[float]:
+        """Recent request rate over the preceding period's, or None.
+
+        The same comparison TRAFFIC_SPIKE fires on, exposed separately because
+        the *absence* of a rise is worth reporting on its own: a load that
+        multiplied while the request rate did not is a load the request count
+        does not account for.
+        """
+        if self.earlier_seconds <= 0 or self.recent_seconds <= 0:
+            return None
+
+        earlier = self.earlier_requests / self.earlier_seconds
+        if earlier <= 0:
+            return None
+        return (self.recent_requests / self.recent_seconds) / earlier
+
+    @property
     def access_unparsed_ratio(self) -> float:
         seen = self.total_requests + self.access_unparsed
         return (self.access_unparsed / float(seen)) if seen else 0.0

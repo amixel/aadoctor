@@ -243,6 +243,16 @@ No version has been released yet. The current source tree is `0.1.0-dev`.
   are now `100755`, and `tests/test_scripts.py` asserts the mode git records -
   the working tree cannot be used for this, because a Windows bind mount
   reports every file inside a container as `rwxrwxrwx`.
+- **A site was named next to a load the traffic could not account for.** The
+  first night in production produced twelve incidents on a 2-CPU server,
+  peaking between 20 and 44 per core, with the request rate flat under 1.5/s
+  throughout. The rules can only rank what is in the logs, so they named the
+  busiest site at MEDIUM - true about the logs, and read as an explanation of
+  the load. `diagnose` now reports when the request rate held steady through a
+  critical incident. It does not suppress the finding and does not claim the
+  traffic is innocent: a single expensive request can pin a core, and aaDoctor
+  cannot see what a request costs. It states the one thing the data supports -
+  the *number* of requests did not change.
 - **The `open() failed` classification never matched anything.** Nginx writes
   the path *between* the two words - `open() "/www/server/stop/404.html"
   failed (2: No such file or directory)` - so the single substring in the
