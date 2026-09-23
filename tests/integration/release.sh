@@ -78,6 +78,17 @@ echo "--- the artifact must not carry bytecode ---"
 tar -tzf "/serve/v${VERSION}/aadoctor-${VERSION}.tar.gz" | grep -c '__pycache__' > /tmp/pyc.count
 check "no __pycache__ inside the artifact" grep -qx '0' /tmp/pyc.count
 
+echo "--- permissions come from the packager, not from the build machine ---"
+tar -tvzf "/serve/v${VERSION}/aadoctor-${VERSION}.tar.gz" > /tmp/listing.txt
+# A Windows bind mount reports every file as 0777. Nothing world-writable may
+# reach a published artifact, whatever the checkout looked like.
+grep -c 'rwxrwxrwx\|rw-rw-rw-' /tmp/listing.txt > /tmp/loose.count
+check "nothing is world-writable" grep -qx '0' /tmp/loose.count
+check "install.sh is executable"  grep -q '^-rwxr-xr-x.*/install.sh$'  /tmp/listing.txt
+check "uninstall.sh is executable" grep -q '^-rwxr-xr-x.*/uninstall.sh$' /tmp/listing.txt
+check "the entry point is executable" grep -q '^-rwxr-xr-x.*/aadoctor$' /tmp/listing.txt
+check "a source file is not executable" grep -q '^-rw-r--r--.*/src/aadoctor/cli.py$' /tmp/listing.txt
+
 echo "--- build twice: the checksum must be identical ---"
 cp "/serve/v${VERSION}/aadoctor-${VERSION}.tar.gz.sha256" /tmp/checksum.first
 bash ./tools/package.sh --output /serve > /dev/null 2>&1

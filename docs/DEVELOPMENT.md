@@ -83,6 +83,30 @@ Three tests are skipped when the suite runs as root, which is the default in a
 container. To exercise them, run the suite as a non-root user inside the
 container.
 
+### What the container cannot check: file permissions
+
+**A Windows bind mount reports every file as `-rwxrwxrwx`.** Inside the
+container the permission bits are fiction, so nothing about them can be
+verified through the working tree — and `core.filemode` is `false` here, so the
+bits on the Windows disk are fiction too.
+
+This cost a broken first install on a real server: everything came out of
+`git clone` as `-rw-r--r--` and `sudo ./install.sh` answered `command not
+found`. The whole container suite had passed, because every script is invoked
+there as `bash ./install.sh`, which never needs the bit.
+
+Two defences, and both look at something other than the working tree:
+
+* `tests/test_scripts.py::Executable` asserts the mode **git records**, which
+  is what a server clones. Add a new script to `EXECUTABLES` there.
+* `tools/package.sh` sets the modes itself instead of inheriting them, and
+  `release.sh` asserts them inside the built tarball — otherwise an artifact
+  built here would ship world-writable files.
+
+The general lesson is worth more than the rule: verifying that something
+*works* is not the same as verifying it is usable **the way the documentation
+says to use it**. Run the documented command, not a convenient equivalent.
+
 ---
 
 ## Development philosophy

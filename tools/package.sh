@@ -73,6 +73,19 @@ done
 # Bytecode from a previous run must never reach a release artifact.
 find "${STAGE}" -name '__pycache__' -type d -prune -exec rm -rf -- {} + 2>/dev/null || true
 
+# Normalise permissions rather than inheriting them from the checkout.
+#
+# `cp -a` above preserves whatever the source had, and the source is not
+# trustworthy: a Windows bind mount reports every file as 0777, so an artifact
+# built there would ship world-writable files and would not match one built on
+# Linux from the same commit. Setting them here makes the tarball depend on
+# the content alone.
+find "${STAGE}" -type d -exec chmod 0755 -- {} +
+find "${STAGE}" -type f -exec chmod 0644 -- {} +
+for executable in aadoctor install.sh uninstall.sh tools/package.sh; do
+    [ -f "${STAGE}/${PREFIX}/${executable}" ] && chmod 0755 "${STAGE}/${PREFIX}/${executable}"
+done
+
 tar --sort=name \
     --mtime="@${SOURCE_DATE_EPOCH:-0}" \
     --owner=0 --group=0 --numeric-owner \

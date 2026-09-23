@@ -22,7 +22,13 @@ ALL_SCRIPTS = SCRIPTS + (
     "tools/package.sh",
     "tests/integration/lifecycle.sh",
     "tests/integration/release.sh",
+    "tests/integration/diagnose.sh",
 )
+
+#: Everything that has to be executable in a fresh clone. `aadoctor` is on the
+#: list because it is the entry point the installer copies to
+#: /usr/local/bin/aadoctor.
+EXECUTABLES = ALL_SCRIPTS + ("aadoctor",)
 
 #: Commands that could modify something. Used to prove /www is only read.
 MUTATORS = (
@@ -79,6 +85,45 @@ class Syntax(unittest.TestCase):
     def test_scripts_fail_fast(self):
         for name in SCRIPTS:
             self.assertIn("set -euo pipefail", read(name), name)
+
+
+class Executable(unittest.TestCase):
+    """Everything documented as `./something` has to actually run that way.
+
+    This is checked against git's index rather than the working tree, because
+    the working tree is the thing that lies. The development machine is
+    Windows, where `core.filemode` is false and the permission bits on disk
+    mean nothing; git records the mode, and git is what a server clones.
+
+    It went wrong exactly once and reached a real server: every file came out
+    of the clone `-rw-r--r--`, and `sudo ./install.sh` answered "command not
+    found". The whole container suite had passed, because every one of those
+    scripts is invoked there as `bash ./install.sh` - which never needs the
+    bit. Verifying that a script *works* is not the same as verifying it is
+    runnable the way the documentation says to run it.
+    """
+
+    @unittest.skipIf(shutil.which("git") is None, "git not available")
+    def test_git_records_the_executable_bit(self):
+        result = subprocess.run(
+            [shutil.which("git"), "ls-files", "--stage", "--"] + list(EXECUTABLES),
+            cwd=str(_support.ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True,
+            check=False,
+        )
+        if result.returncode != 0:  # not a checkout, e.g. an unpacked release
+            self.skipTest("not a git working tree")
+
+        modes = {}
+        for line in result.stdout.splitlines():
+            head, _, path = line.partition("\t")
+            modes[path.strip()] = head.split()[0]
+
+        self.assertEqual(sorted(modes), sorted(EXECUTABLES))
+        for path, mode in sorted(modes.items()):
+            self.assertEqual(mode, "100755", f"{path} is recorded as {mode}")
 
 
 class NonInvasive(unittest.TestCase):

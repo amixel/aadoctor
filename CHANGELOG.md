@@ -236,6 +236,18 @@ No version has been released yet. The current source tree is `0.1.0-dev`.
 - `aadoctor status` said "diagnosis not implemented yet" long after it was
   implemented. A test had been asserting that sentence, which is how it
   survived; the test now asserts the opposite.
+- **`install.sh`, `uninstall.sh`, `aadoctor` and the helper scripts were not
+  executable in a fresh clone.** They were committed from a Windows checkout
+  where `core.filemode` is false, so git recorded mode `100644`, and
+  `sudo ./install.sh` on a real server answered `command not found`. The modes
+  are now `100755`, and `tests/test_scripts.py` asserts the mode git records -
+  the working tree cannot be used for this, because a Windows bind mount
+  reports every file inside a container as `rwxrwxrwx`.
+- `tools/package.sh` inherited permissions from the checkout through `cp -a`,
+  so an artifact built on Windows would have shipped every file
+  world-writable and would not have matched one built on Linux from the same
+  commit. It now sets the modes itself, and `release.sh` asserts them inside
+  the tarball.
 
 ### Removed
 
