@@ -423,11 +423,23 @@ def _inconclusive_summary(
     real; what the logs do not show is a dominant source for it. Inventing a
     suspect to avoid saying so would make every other answer worth less.
 
-    But there are two different negatives here, and saying the wrong one is
-    its own kind of invention. "We looked at a full window and nothing stood
-    out" is a finding. "We had nine requests, so nothing could stand out" is
-    not a finding at all, and must not be phrased as one - it happens on every
-    incident that opens shortly after the daemon starts.
+    There are three different negatives here, and saying the wrong one is its
+    own kind of invention.
+
+    * "We looked at a full window and nothing stood out" is a finding.
+    * "We had nine requests, so nothing could stand out" is not a finding at
+      all. It happens on every incident that opens shortly after the daemon
+      starts.
+    * "The server had plenty of requests, but no single site had enough to
+      look inside" is a third thing again.
+
+    The guard is applied to different denominators by different rules -
+    ONE_SITE_DOMINATING measures against the server, ONE_URL_DOMINATING and
+    ONE_IP_DOMINATING against one site - so which rule went hungry decides
+    which sentence is true. Reading "below minimum volume" from any of them
+    and then quoting the server total produced a sentence that contradicted
+    its own numbers on a real incident: *the window holds 249 requests, below
+    the 100 needed*.
     """
     if not facts.has_traffic:
         return (
@@ -436,8 +448,10 @@ def _inconclusive_summary(
         )
 
     base = "No clear log-based cause identified."
+    starved = {item.code for item in blocked if item.reason == STARVED}
 
-    if any(item.reason == STARVED for item in blocked) and not findings:
+    # The server total itself was under the guard: nothing could be judged.
+    if ONE_SITE_DOMINATING in starved and not findings:
         return (
             "Not enough traffic to judge: the window holds %s requests over "
             "%.0f seconds, below the %s needed before any share means "
@@ -445,6 +459,15 @@ def _inconclusive_summary(
             "traffic explains it is unknown - which is not the same as it "
             "being ruled out."
             % (f"{facts.total_requests:,}", facts.coverage_seconds, f"{limits.min_volume:,}")
+        )
+
+    # The server had enough; no individual site did.
+    if starved and not findings:
+        return (
+            "%s No site accounted for an unusual share of the %s requests in "
+            "this window, and none of them held the %s needed to judge its "
+            "paths or addresses."
+            % (base, f"{facts.total_requests:,}", f"{limits.min_volume:,}")
         )
 
     if candidate and not _anchored(findings, candidate):

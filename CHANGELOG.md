@@ -243,6 +243,14 @@ No version has been released yet. The current source tree is `0.1.0-dev`.
   are now `100755`, and `tests/test_scripts.py` asserts the mode git records -
   the working tree cannot be used for this, because a Windows bind mount
   reports every file inside a container as `rwxrwxrwx`.
+- **A summary contradicted its own numbers**: *the window holds 249 requests
+  over 300 seconds, below the 100 needed*. The minimum-volume guard is
+  measured against different denominators by different rules - the server
+  total by `ONE_SITE_DOMINATING`, one site's total by the path and address
+  rules - so reading "below minimum volume" from any of them and then quoting
+  the server total was wrong whenever the server had traffic and no single
+  site had much. That case now has its own sentence, naming which measurement
+  fell short.
 - **A site was named next to a load the traffic could not account for.** The
   first night in production produced twelve incidents on a 2-CPU server,
   peaking between 20 and 44 per core, with the request rate flat under 1.5/s

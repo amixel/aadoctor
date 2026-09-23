@@ -146,6 +146,52 @@ class TooLittleTrafficToJudge(unittest.TestCase):
         self.assertNotIn("Not enough traffic", distributed.summary)
 
 
+class EnoughTrafficButNoSiteBigEnough(unittest.TestCase):
+    """The server had requests; no single site had enough to look inside.
+
+    A third negative, and for a while it borrowed the wording of the second.
+    The guard is measured against the server by ONE_SITE_DOMINATING and
+    against one site by the path and address rules, so reading "below minimum
+    volume" from any of them and then quoting the server total produced a
+    sentence that contradicted itself on a real incident:
+
+        the window holds 249 requests over 300 seconds, below the 100 needed
+    """
+
+    def setUp(self):
+        total = 249
+        per_site = [
+            fixtures.site("a.com.br", 80, total, paths=[("/", 60)],
+                          ips=[("1.1.1.1", 70)], statuses={"200": 80}),
+            fixtures.site("b.com.br", 90, total, paths=[("/", 50)],
+                          ips=[("2.2.2.2", 60)], statuses={"200": 90}),
+            fixtures.site("c.com.br", 79, total, paths=[("/", 40)],
+                          ips=[("3.3.3.3", 50)], statuses={"200": 79}),
+        ]
+        self.result = diagnosis.diagnose(fixtures.incident(
+            peak=fixtures.one_window(fixtures.window(
+                300, total_requests=total, per_site=per_site,
+                statuses={"200": total})),
+            cpu_count=2, peak_load=83.97))
+
+    def test_the_server_total_was_above_the_guard(self):
+        # So ONE_SITE_DOMINATING ran, and simply did not fire.
+        blocked = {item.code for item in self.result.not_evaluable}
+        self.assertNotIn(builtin.ONE_SITE_DOMINATING, blocked)
+        self.assertIn(builtin.ONE_URL_DOMINATING, blocked)
+
+    def test_it_does_not_say_the_window_was_too_small(self):
+        self.assertNotIn("Not enough traffic to judge", self.result.summary)
+
+    def test_the_sentence_does_not_contradict_its_own_numbers(self):
+        self.assertIn("249 requests", self.result.summary)
+        self.assertNotIn("249 requests over", self.result.summary)
+
+    def test_it_says_which_measurement_fell_short(self):
+        self.assertIn("No site accounted for an unusual share", self.result.summary)
+        self.assertIn("none of them held the 100 needed", self.result.summary)
+
+
 class OneQuietSiteWithOneEndpoint(unittest.TestCase):
     """Ten even sites, one of which serves a single endpoint.
 
