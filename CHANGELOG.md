@@ -243,6 +243,13 @@ No version has been released yet. The current source tree is `0.1.0-dev`.
   are now `100755`, and `tests/test_scripts.py` asserts the mode git records -
   the working tree cannot be used for this, because a Windows bind mount
   reports every file inside a container as `rwxrwxrwx`.
+- **`aadoctor top` ran to more than 140 columns on a real server.** The path
+  column was sized to the longest path, and real paths are long slugs. Both
+  columns are now bounded, and a shortened value is cut in the middle and
+  marked `...` - two articles on one site share a long prefix, so cutting the
+  tail would have rendered distinct rows identically. The width test had
+  passed throughout because every fixture path was short; it now uses names
+  and paths taken from the first production install.
 - **`install.sh` destroyed the checkout when run from `/opt/aadoctor`.** That
   directory is the install destination, and `git clone ... /opt/aadoctor` is a
   natural thing to do. The swap moved the source aside and deleted it - taking

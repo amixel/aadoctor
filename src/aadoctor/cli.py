@@ -577,14 +577,51 @@ def _print_incomplete_warning(window: dict, total: int) -> None:
     print("Traffic below is incomplete. Run 'aadoctor doctor' for details.")
 
 
+#: SPEC-008: the report is read over SSH, often on a tethered phone.
+LINE_WIDTH = 80
+COUNT_WIDTH = 9
+SHARE_WIDTH = 7
+MIN_KEY_WIDTH = 20
+MAX_SITE_WIDTH = 24
+
+
+def _fit(value: str, width: int) -> str:
+    """Shorten to `width`, cutting the middle rather than the end.
+
+    Real paths are long slugs, and they differ at the end as often as at the
+    start: `/info/1487279872.html` and `/info/441747584.html` share a prefix,
+    and two articles on the same site share a long one. Cutting the tail would
+    render distinct rows identically, which is worse than not showing them.
+    """
+    if len(value) <= width:
+        return value
+    if width <= len(_ELLIPSIS):
+        return value[:width]
+
+    keep = width - len(_ELLIPSIS)
+    head = (keep + 1) // 2
+    return value[:head] + _ELLIPSIS + value[len(value) - (keep - head):]
+
+
+#: Plain ASCII, so the output survives being piped, copied out of a terminal
+#: or pasted into a ticket.
+_ELLIPSIS = "..."
+
+
 def _print_entries(title: str, entries, share: bool = False) -> None:
     if not entries:
         return
     print()
     print(title)
-    width = max([len(str(entry.get("key", ""))) for entry in entries] + [20])
+
+    budget = LINE_WIDTH - COUNT_WIDTH - 2 - (SHARE_WIDTH if share else 0)
+    width = min(
+        max([len(str(entry.get("key", ""))) for entry in entries] + [MIN_KEY_WIDTH]),
+        budget,
+    )
     for entry in entries:
-        line = f"{str(entry.get('key', '')).ljust(width)}  {int(entry.get('count', 0)):>9,}"
+        key = _fit(str(entry.get("key", "")), width)
+        line = f"{key.ljust(width)}  {int(entry.get('count', 0)):>9,}"
         if share:
             line += f"  {100.0 * float(entry.get('share', 0.0)):>5.1f}%"
         print(line)
@@ -604,10 +641,18 @@ def _print_site_paths(window: dict) -> None:
 
     print()
     print("TOP PATHS")
-    site_width = max(len(row[0]) for row in rows)
-    path_width = max([len(row[1]) for row in rows] + [20])
+    # Both columns are bounded. A real server's paths run to a hundred
+    # characters, and letting the column grow to the longest one pushed this
+    # table far past the width of anyone's terminal.
+    site_width = min(max(len(row[0]) for row in rows), MAX_SITE_WIDTH)
+    path_width = max(MIN_KEY_WIDTH, LINE_WIDTH - site_width - COUNT_WIDTH - 4)
+
     for site, path, count in rows:
-        print(f"{site.ljust(site_width)}  {path[:path_width].ljust(path_width)}  {count:>9,}")
+        print(
+            f"{_fit(site, site_width).ljust(site_width)}  "
+            f"{_fit(path, path_width).ljust(path_width)}  "
+            f"{count:>9,}"
+        )
 
 
 def _print_map(title: str, values, order=None) -> None:

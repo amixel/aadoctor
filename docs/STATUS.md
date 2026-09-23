@@ -100,12 +100,23 @@ Nothing.
 
 ## Known risks
 
-- **Never run under real systemd.** Containers have no init system, so the
-  integration scripts stub `systemctl`. Running `install.sh` then
-  `aadoctor enable` on a real Linux host is the remaining gate for AAD-004.
-- **Never run against a real aaPanel installation.** Six phases now rest on
-  the assumption that a real server's `log_format` is one of the two supported
-  ones. This has been the largest risk for four rounds and has not moved.
+- ~~**Never run under real systemd.**~~ **Retired.** `install.sh`,
+  `aadoctor enable` and `aadoctor status` ran on a real aaPanel host on
+  2026-09-22; the unit installed, loaded and reports `active (enabled)`.
+  AAD-004 and Phase 1 close once a `disable` and a `uninstall --purge` have
+  also been exercised there.
+- **First field observation, unresolved: the trigger fires readily.** The test
+  server has 2 CPUs and its load swings between roughly 1.3 and 8.8 —
+  `load average: 2.17, 5.49, 3.04` at one sample. At
+  `trigger_per_cpu = 1.0` an incident opened within a minute of enabling,
+  peaking at 3.71 per core, with 51 requests in the window. Whether that is a
+  useful incident or noise is the open question, and it needs days of data,
+  not a change today.
+- ~~**Never run against a real aaPanel installation.**~~ **Retired.** Installed
+  on a production aaPanel server on 2026-09-22: 25 sites discovered, 21 access
+  and 21 error logs configured, 40 followed. **The real `log_format` parses** —
+  `top` renders sites, paths, addresses, status classes and error kinds from
+  live traffic. This was the largest risk for four rounds.
 - **Thresholds are unvalidated — all of them.** `trigger_per_cpu = 1.0` and
   `critical_per_cpu = 2.0` come from README §14; the sixteen values in
   `[rules]` come from SPEC-007. None has been checked against a real server.

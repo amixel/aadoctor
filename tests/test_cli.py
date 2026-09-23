@@ -325,6 +325,58 @@ class Top(unittest.TestCase):
         self.assertIn("old", out)
         self.assertNotIn("Updated 0s ago", out)
 
+    def real_world_aggregator(self):
+        """Names and paths as a real aaPanel server actually produces them.
+
+        Taken from the first production install. The fixtures above are short
+        and tidy, which is exactly why they hid a table that ran to more than
+        140 columns on a real server.
+        """
+        aggregator = TrafficAggregator()
+        long_paths = [
+            "/politica/florianopolis-e-a-cidade-mais-cara-do-pais-para-comer-fora-de-casa/",
+            "/dever-de-cooperar-com-o-consumidor-frente-as-enchentes-o-principio-da-"
+            "manutencao-do-contrato-e-a-excecao-da-ruina/",
+            "/evento/posse-do-departamento-de-responsabilidade-civil-e-aniversario-de-"
+            "1-ano-das-lives-do-iargs/",
+        ]
+        for index, path in enumerate(long_paths):
+            for _ in range(10 - index):
+                aggregator.add(
+                    AccessEvent(remote_addr="66.249.64.193", method="GET", path=path,
+                                status=200, site="canaldopoder.net.br")
+                )
+        for _ in range(14):
+            aggregator.add(
+                AccessEvent(remote_addr="45.175.48.169", method="POST",
+                            path="/xmlrpc.php", status=200, site="iargs.com.br")
+            )
+        return aggregator
+
+    def test_long_real_world_paths_still_fit_eighty_columns(self):
+        self.publish(self.real_world_aggregator())
+        _, out, _ = run(["top"])
+
+        self.assertIn("TOP PATHS", out)
+        for line in out.splitlines():
+            self.assertLessEqual(len(line), 80, line)
+
+    def test_a_shortened_path_is_marked_as_shortened(self):
+        self.publish(self.real_world_aggregator())
+        _, out, _ = run(["top"])
+
+        self.assertIn("...", out)
+
+    def test_shortening_keeps_both_ends_so_rows_stay_distinguishable(self):
+        # Two articles on one site share a long prefix. Cutting the tail would
+        # render them as the same row.
+        first = "/blog/2026/01/a-very-long-article-slug-that-goes-on/comentarios-a"
+        second = "/blog/2026/01/a-very-long-article-slug-that-goes-on/comentarios-b"
+
+        self.assertNotEqual(cli._fit(first, 40), cli._fit(second, 40))
+        self.assertLessEqual(len(cli._fit(first, 40)), 40)
+        self.assertEqual(cli._fit("/short", 40), "/short")
+
     def test_the_output_fits_eighty_columns(self):
         self.publish()
         _, out, _ = run(["top"])

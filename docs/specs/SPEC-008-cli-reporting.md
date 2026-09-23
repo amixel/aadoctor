@@ -229,7 +229,11 @@ is not an incident id - a path, say - never reaches the filesystem.
 
 ### Output conventions
 
-- Plain text, no box-drawing characters, readable at 80 columns.
+- Plain text, no box-drawing characters, readable at 80 columns. Every column
+  is bounded: a real server's paths run past a hundred characters, and a table
+  sized to the longest value runs off the terminal. A shortened value is cut
+  in the **middle**, marked with `...`, because two articles on one site share
+  a long prefix and cutting the tail would render distinct rows identically.
 - Numbers right-aligned in tables; the README examples are the reference style.
 - Color, if used at all, is additive; output must be unambiguous piped to a file.
 - No spinners, no progress animation, no cursor manipulation.
