@@ -211,6 +211,13 @@ core and severity. `--limit N` (default 20) and `--json`. An empty directory
 produces a clear empty result, not an error, and says where the daemon would
 write them.
 
+The duration column carries a word where a number will not do: `open` while the
+incident is still running, and `interrupted` when the daemon was restarted
+inside it and its end is genuinely unknown ([SPEC-006](SPEC-006-load-incident-detection.md)).
+A bare dash reads as "could not compute" and hides the one thing worth knowing
+about that row — which is what it did on the first production server, after an
+upgrade restarted the daemon mid-incident.
+
 No finding and no confidence appear here: an incident records when the server
 was under load and what the logs showed, and interpreting that is SPEC-007.
 

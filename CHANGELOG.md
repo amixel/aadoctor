@@ -243,6 +243,10 @@ No version has been released yet. The current source tree is `0.1.0-dev`.
   are now `100755`, and `tests/test_scripts.py` asserts the mode git records -
   the working tree cannot be used for this, because a Windows bind mount
   reports every file inside a container as `rwxrwxrwx`.
+- **An interrupted incident was listed as a bare dash.** A daemon restart
+  mid-incident leaves the end unknown, and SPEC-006 made that a status so it
+  would be visible; the listing then showed it in the duration column as `-`,
+  which reads as "could not compute". It says `interrupted`.
 - **A summary contradicted its own numbers**: *the window holds 249 requests
   over 300 seconds, below the 100 needed*. The minimum-volume guard is
   measured against different denominators by different rules - the server

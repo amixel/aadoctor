@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: 2026-09-22
+Last updated: 2026-09-23
 
 ## Current phase
 
@@ -20,8 +20,15 @@ aaPanel -> discovery -> log tail -> parsing -> aggregation -> load
 
 ## Current objective
 
-Put it on a real aaPanel server. Every threshold in SPEC-006 and SPEC-007 is an
-unvalidated guess, and no amount of further code will change that.
+**Done: it is on a real aaPanel server**, since 2026-09-22. See `Known risks`
+for what that produced — it retired the two largest risks and cost nine
+defects, all of them found by reading real output.
+
+The objective now is narrower and needs a different machine. That server's load
+comes from memory pressure, not from HTTP, so it exercises only aaDoctor's
+ability to *decline* to name a culprit. Naming one correctly — the positive
+path, and the reason the project exists — is still unproven. It needs a server
+whose load genuinely comes from traffic.
 
 ## Completed
 
@@ -30,7 +37,7 @@ Documentation:
 - `README.md`, [/CLAUDE.md](../CLAUDE.md), 9 specs, 8 ADRs, backlog, changelog.
 - `LICENSE` — MIT, Alex Torres.
 
-Code (version `0.1.0-dev`), SPEC-001 to SPEC-003 committed:
+Code (version `0.1.0-dev`), all of it committed and pushed:
 
 - `src/aadoctor/` — `paths`, `config`, `environment`, `service`, `daemon`,
   `cli`, `runtime`, plus `discovery/` (SPEC-002), `collectors/` (SPEC-003 and
@@ -46,14 +53,14 @@ Code (version `0.1.0-dev`), SPEC-001 to SPEC-003 committed:
   on demand from the stored incident and never writes back.
 - `install.sh`, `uninstall.sh`, `tools/package.sh`,
   `systemd/aadoctor.service`, `config.example.toml`, `VERSION`.
-- `tests/` — 615 unit tests, 12 vhost fixtures, three container integration
+- `tests/` — 647 unit tests, 12 vhost fixtures, three container integration
   suites.
 
 Verified, in disposable Linux containers:
 
-- 615/615 unit tests on Python 3.8 and 3.12, as root and as a non-root user.
+- 647/647 unit tests on Python 3.8 and 3.12, as root and as a non-root user.
   `compileall` clean.
-- 42/42 lifecycle checks and 32/32 release checks — SPEC-001 unaffected.
+- 49/49 lifecycle checks and 37/37 release checks — SPEC-001 unaffected.
 - The real daemon over a 200,000-line access log: none of that history read,
   rotation and truncation detected live, a restart resuming without re-reading.
 - The real daemon on a three-site burst with a load curve from 0.5 to 2.9 per
@@ -129,12 +136,25 @@ Nothing.
   high confidence — is still unproven in the field, and needs a server whose
   load genuinely comes from HTTP.
 
-  Four defects came out of that night, all of them in what the tool *said*
-  rather than what it computed: a summary claiming the logs showed nothing
-  when there had been nothing to look at; a summary contradicting its own
-  numbers; a site named beside a load its traffic could not account for; and
-  an error pattern that had never matched a line Nginx writes. Every one was
-  found by reading real output, not by a test.
+  **Nine defects came out of that one server**, and not one of them was found
+  by a test:
+
+  | What broke | Why the suite missed it |
+  |---|---|
+  | Scripts not executable in a clone | tests invoke them as `bash x.sh`, and a Windows bind mount reports every file `rwxrwxrwx` |
+  | `install.sh` destroyed a checkout in `/opt/aadoctor` | tests always installed from elsewhere |
+  | `top` ran past 140 columns | every fixture path was short and tidy |
+  | `status` still said diagnosis was unimplemented | a test asserted that sentence |
+  | "the logs show no dominant site" on nine requests | no fixture had a window that thin |
+  | `NOT_FOUND_FLOOD` could not fire below 16.7 req/s | the thresholds multiply, and no fixture was small |
+  | `open() failed` matched no line Nginx writes | the fixture was written from imagination |
+  | A summary contradicting its own numbers | the guard has two denominators |
+  | An interrupted incident shown as a bare dash | nothing had been interrupted before |
+
+  Seven of the nine are in what the tool **said**, not in what it computed.
+  The lesson is narrow and repeatable: **a fixture written from what a format
+  looks like proves only that the code agrees with its author.** Real output,
+  read by a person, is a different instrument.
 - **Thresholds are unvalidated — apart from the load trigger.**
   `critical_per_cpu = 2.0` and the sixteen values in `[rules]` have still not
   been checked against a server whose load comes from traffic.
