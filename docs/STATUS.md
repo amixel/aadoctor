@@ -58,7 +58,8 @@ should be read as a capability that exists.
 
 Documentation:
 
-- `README.md`, [/CLAUDE.md](../CLAUDE.md), 17 specs, 11 ADRs, backlog, changelog.
+- `README.md`, [USAGE.md](USAGE.md), [/CLAUDE.md](../CLAUDE.md), 17 specs,
+  11 ADRs, backlog, changelog.
   Nine specs are Implemented or In Progress; **SPEC-010 to SPEC-017 are Draft**
   and describe work that does not exist yet. ADR-009, ADR-010 and ADR-011 are
   `Proposed`, not accepted — and ADR-010 contradicts ADR-001, which is

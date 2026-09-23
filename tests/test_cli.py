@@ -81,6 +81,33 @@ class Usage(unittest.TestCase):
         ):
             self.assertIn(command, out)
 
+    def test_help_shows_the_order_the_commands_are_used_in(self):
+        # The command list alone does not say that `doctor` comes before
+        # `enable`, or that nothing appears until traffic has arrived. Both
+        # were real questions from the first server this ran on.
+        code, out, _ = run(["--help"])
+
+        self.assertEqual(code, 0)
+        for step in ("doctor", "enable", "top", "incidents", "diagnose"):
+            self.assertIn(step, out)
+        self.assertIn("USAGE.md", out)
+
+    def test_help_fits_eighty_columns(self):
+        # SPEC-008: read over SSH during an incident, often on a phone.
+        _, out, _ = run(["--help"])
+
+        too_wide = [line for line in out.splitlines() if len(line) > 80]
+        self.assertEqual(too_wide, [])
+
+    def test_help_promises_nothing_the_tool_does_not_do(self):
+        # SPEC-008 and ADR-001: no command here acts on the server, and the
+        # help must not imply otherwise.
+        _, out, _ = run(["--help"])
+        lowered = out.lower()
+
+        for forbidden in ("restart", "block", "fix", "clean", "repair"):
+            self.assertNotIn(f" {forbidden} ", f" {lowered} ".replace("\n", " "))
+
     def test_planned_commands_are_not_pretending_to_exist(self):
         # SPEC-008 plans this; it is not implemented, so it is not registered.
         for command in ("explain",):

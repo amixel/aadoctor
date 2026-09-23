@@ -187,6 +187,19 @@ No version has been released yet. The current source tree is `0.1.0-dev`.
   Only `/proc/loadavg` is substituted. It refuses to run outside a container,
   and refuses to touch a `/www` it did not create.
 - ADR-008: minimum Python version 3.8, resolving the TBD in README §88.
+- `docs/USAGE.md`: a usage guide for the administrator running aaDoctor on a
+  server — install, the first `doctor`, the daily commands, how to read a
+  diagnosis, the exit codes and the common problems. It documents **only what
+  exists**; what is specified but unimplemented is listed separately as such.
+  It also says plainly **what aaDoctor cannot see**, and what to run instead
+  when `diagnose` reports no cause in the logs — the lesson from the first
+  production server, where twenty incidents were caused by memory pressure that
+  no web-server log could show.
+- `aadoctor --help` gained an epilog: the order the commands are used in, the
+  fact that monitoring starts at the end of each log so nothing appears until
+  traffic arrives, the exit codes, and a pointer to the guide. The command list
+  alone said none of it. Tests assert it fits 80 columns and that it promises
+  nothing the tool does not do.
 - **Documentation and roadmap only — SPEC-010 to SPEC-015, all `Draft`.** Six
   specs planning the diagnosis of load that does not come from HTTP, which the
   first production server showed the tool cannot currently explain. **No

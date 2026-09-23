@@ -273,6 +273,7 @@ Do not duplicate content across documents.
 | Document | Owns |
 |---|---|
 | [README.md](README.md) | vision, scope, limits, guarantees |
+| [docs/USAGE.md](docs/USAGE.md) | how an administrator actually uses it |
 | [specs/](docs/specs/) | behavior to implement |
 | [adr/](docs/adr/) | decisions and their consequences |
 | [BACKLOG.md](docs/BACKLOG.md) | work items and their state |

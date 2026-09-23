@@ -57,10 +57,33 @@ class _Parser(argparse.ArgumentParser):
         raise SystemExit(EXIT_USAGE)
 
 
+HELP_EPILOG = """\
+typical use:
+  aadoctor doctor            check the environment first; it changes nothing
+  sudo aadoctor enable       start monitoring, then leave it running
+  aadoctor top               what the traffic looks like right now
+  aadoctor incidents         periods of high load it recorded
+  aadoctor diagnose          what the evidence says about the last one
+
+A command reads and reports. Nothing here restarts a service, blocks an
+address or edits a site, and nothing is written outside aaDoctor's own paths.
+
+Monitoring starts at the end of each log, so there is nothing to show until
+some traffic has arrived.
+
+exit codes: 0 ok - 1 usage - 2 environment not ready - 3 not found
+            4 daemon required - 5 root required
+
+Guide: docs/USAGE.md      `aadoctor <command> --help` for one command
+"""
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
         prog="aadoctor",
         description=f"{DISPLAY_NAME} - lightweight aaPanel + Nginx diagnostics",
+        epilog=HELP_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--version",

@@ -2896,6 +2896,9 @@ aadoctor top
 aadoctor diagnose
 ```
 
+O guia completo — o que cada comando mostra, como ler um diagnóstico, e
+**o que o aaDoctor não consegue ver** — está em [docs/USAGE.md](docs/USAGE.md).
+
 Desativação:
 
 ```bash
