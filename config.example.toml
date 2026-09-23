@@ -71,7 +71,7 @@ retention_days = 30
 # 404s need both a share and a rate: a 404 is cheap to serve, so on its own it
 # usually explains noise rather than load.
 # not_found_share = 0.30
-# not_found_min_rate = 5.0
+# not_found_min_rate = 0.5
 #
 # 5xx fires on either a share or a rate, above an absolute floor so that three
 # errors are never called a spike.

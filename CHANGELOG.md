@@ -243,6 +243,13 @@ No version has been released yet. The current source tree is `0.1.0-dev`.
   are now `100755`, and `tests/test_scripts.py` asserts the mode git records -
   the working tree cannot be used for this, because a Windows bind mount
   reports every file inside a container as `rwxrwxrwx`.
+- **`NOT_FOUND_FLOOD` could not fire on a normal server.** Its two conditions
+  multiply: requiring a 30% share *and* 5 404s a second silently required the
+  whole server to be serving 16.7 req/s. The first production incident had 82%
+  of 869 requests returning 404 during a load spike at 2.9 req/s, and the rule
+  stayed quiet. `not_found_min_rate` is now 0.5/s, and a test asserts the
+  property - the rule must stay reachable on a small server - rather than the
+  number.
 - **`diagnose` claimed the logs showed nothing when it had not looked.** An
   incident opening seconds after the daemon starts holds a few seconds of
   window - the first one on the first production server held nine requests -

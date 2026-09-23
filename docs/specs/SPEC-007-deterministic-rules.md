@@ -235,7 +235,18 @@ evidence    404 count, share, rate, both thresholds, 4xx counts per site
 confidence  scales with the weaker of the two axes
 ```
 
-Starting points: `not_found_share = 0.30`, `not_found_min_rate = 5/s`.
+Starting points: `not_found_share = 0.30`, `not_found_min_rate = 0.5/s`.
+
+**The two conditions multiply, and that nearly disabled the rule.** Requiring
+a share of `S` and a rate of `R` means the whole server has to be serving
+`R / S` requests a second before this can fire at all. The 5/s this spec
+originally specified silently required 16.7 req/s — more than most aaPanel
+servers ever see. The first production server it met was doing 2.9 req/s with
+82% of its requests returning 404 during a load spike, and the rule stayed
+silent. The floor now comes from what a small server looks like.
+
+A test asserts the property rather than the number: whatever the thresholds
+become, `not_found_min_rate / not_found_share` has to stay reachable.
 
 The **top 404 paths are not available**: statuses and paths are counted as
 separate dimensions (SPEC-005), so which paths the 404s were for is genuinely

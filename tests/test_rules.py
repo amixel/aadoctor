@@ -322,9 +322,10 @@ class NotFoundFlood(unittest.TestCase):
         self.assertEqual(finding.evidence["count"], 3_000)
 
     def test_both_a_share_and_a_rate_are_required(self):
-        # 40% of a slow trickle: the share is there, the rate is not.
-        record = one_site(500, 500, paths=[("/", 500)],
-                          statuses={"200": 300, "404": 200}, seconds=300)
+        # 40% of a slow trickle - 120 missing pages over five minutes. The
+        # share is there, the rate is not, and nothing here is a flood.
+        record = one_site(300, 300, paths=[("/", 300)],
+                          statuses={"200": 180, "404": 120}, seconds=300)
         self.assertIsNone(run(record, builtin.rule_not_found_flood))
 
     def test_a_high_rate_at_a_low_share_does_not_fire(self):
@@ -336,6 +337,40 @@ class NotFoundFlood(unittest.TestCase):
         record = one_site(5, 5, paths=[("/", 5)], statuses={"200": 2, "404": 3})
         result = run(record, builtin.rule_not_found_flood)
         self.assertIsInstance(result, rules.NotEvaluable)
+
+    def test_it_can_fire_on_a_server_that_is_not_busy(self):
+        """The two thresholds multiply, and that nearly disabled the rule.
+
+        Requiring a share of S *and* a rate of R means the whole server has to
+        be serving R/S requests a second before this can fire. At 0.30 and 5/s
+        that was 16.7 req/s - more than most aaPanel servers ever see. The
+        first production incident had 82% of 869 requests returning 404 during
+        a load spike, at 2.9 req/s, and the rule stayed silent.
+
+        This asserts the property rather than the number: whatever the
+        thresholds become, the rule has to be reachable on a small server.
+        """
+        limits = rules.Thresholds()
+        reachable = limits.not_found_min_rate / limits.not_found_share
+
+        self.assertLess(reachable, 5.0, "the rule needs %.1f req/s to fire at all" % reachable)
+
+    def test_the_real_incident_that_exposed_it_now_fires(self):
+        # 869 requests over 300s, 713 of them 404 - the numbers as recorded.
+        record = one_site(869, 869, paths=[("/", 869)],
+                          statuses={"200": 140, "301": 16, "404": 713}, seconds=300)
+        finding = run(record, builtin.rule_not_found_flood)
+
+        self.assertIsNotNone(finding)
+        self.assertEqual(finding.evidence["count"], 713)
+        self.assertAlmostEqual(finding.evidence["share"], 0.8205, places=3)
+
+    def test_a_handful_of_stale_links_on_a_quiet_site_still_does_not_fire(self):
+        # 35% of a slow trickle is normal: old links, a missing favicon, a
+        # bookmarked page that moved. Lowering the floor must not catch this.
+        record = one_site(200, 200, paths=[("/", 200)],
+                          statuses={"200": 130, "404": 70}, seconds=300)
+        self.assertIsNone(run(record, builtin.rule_not_found_flood))
 
     def test_it_does_not_claim_to_know_which_paths_were_missing(self):
         # Statuses and paths are counted separately; the cross-product does not

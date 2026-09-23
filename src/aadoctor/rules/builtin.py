@@ -343,6 +343,14 @@ def rule_not_found_flood(facts: Facts, t) -> Result:
     Both are required. A 404 is usually cheap to serve, so this explains noise
     far more often than it explains load, and a share alone on a quiet server
     would fire constantly.
+
+    The two conditions multiply, which is a trap worth stating: requiring a
+    share of S and a rate of R means the *server* has to be doing R/S requests
+    a second before the rule can fire at all. The first thresholds shipped -
+    0.30 and 5/s - silently needed 16.7 req/s, and the first production server
+    it met was doing 2.9. Eighty-two per cent of its requests were 404s during
+    a load spike and this stayed quiet. The floor is now set from what a small
+    server looks like, not from what a busy one does.
     """
     if not facts.has_traffic:
         return NotEvaluable(NOT_FOUND_FLOOD, "no_traffic_recorded")

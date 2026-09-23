@@ -51,7 +51,7 @@ DEFAULTS: Dict[str, Dict[str, Any]] = {
         "ip_share": 0.50,
         "ip_share_ceiling": 0.75,
         "not_found_share": 0.30,
-        "not_found_min_rate": 5.0,
+        "not_found_min_rate": 0.5,
         "http_5xx_share": 0.01,
         "http_5xx_min_rate": 1.0,
         "http_5xx_min_count": 10,
