@@ -539,6 +539,24 @@ class Incidents(unittest.TestCase):
 
         self.assertIn("open", out)
 
+    def test_an_interrupted_incident_says_so_rather_than_showing_a_dash(self):
+        # A daemon restart mid-incident leaves the end unknown. SPEC-006 made
+        # that a status so it would be visible; a bare dash in a duration
+        # column reads as "could not compute" and hides it.
+        self.write("2026-09-22T18-31-40", status="interrupted")
+        _, out, _ = run(["incidents"])
+
+        self.assertIn("interrupted", out)
+        row = [line for line in out.splitlines() if line.startswith("2026-")][0]
+        self.assertNotIn(" -  ", row)
+
+    def test_the_listing_still_fits_eighty_columns_with_that_word(self):
+        self.write("2026-09-22T18-31-40", status="interrupted")
+        _, out, _ = run(["incidents"])
+
+        for line in out.splitlines():
+            self.assertLessEqual(len(line), 80, line)
+
     def test_the_limit_is_respected(self):
         for index in range(5):
             self.write(f"2026-09-22T18-31-4{index}")

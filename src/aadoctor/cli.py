@@ -701,12 +701,12 @@ def cmd_incidents(args: argparse.Namespace) -> int:
         print(f"The daemon writes them to {INCIDENTS_DIR} when load rises.")
         return EXIT_OK
 
-    print(f"{'ID':<21} {'START':<15} {'DURATION':>9}  {'PEAK/CORE':>9}  SEVERITY")
+    print(f"{'ID':<21} {'START':<15} {'DURATION':>11}  {'PEAK/CORE':>9}  SEVERITY")
     for item in found:
         print(
             f"{item.id:<21} "
             f"{_short_time(item.started_at):<15} "
-            f"{_duration_text(item):>9}  "
+            f"{_duration_text(item):>11}  "
             f"{item.peak_load_per_cpu:>9.2f}  "
             f"{item.severity}"
         )
@@ -942,8 +942,17 @@ def _short_time(value: str) -> str:
 
 
 def _duration_text(incident) -> str:
+    """How long it ran, or why that is not a number.
+
+    An interrupted incident is named rather than shown as a bare dash. SPEC-006
+    created that status so a daemon restart mid-incident would be visible, and
+    a dash in a duration column reads as "could not compute" - which hides the
+    one thing worth knowing about that row.
+    """
     if incident.status == incidents.OPEN:
         return "open"
+    if incident.status == incidents.INTERRUPTED:
+        return "interrupted"
     seconds = incident.duration_seconds()
     if seconds is None:
         return "-"
