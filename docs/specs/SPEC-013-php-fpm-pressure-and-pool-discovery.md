@@ -413,9 +413,7 @@ PHP version in `state.json`. No new file, no new directory.
 - **`memory_limit` is per request, not per worker**, and a worker's resident
   size is not bounded by it. `PHP_FPM_PROCESS_PRESSURE` uses *observed* resident
   size for that reason, and the configured limit appears only as context.
-- TBD: whether to read an already-enabled slow log. It contains request URIs and
-  stack traces — useful, and a privacy surface this project has so far avoided.
-  Not decided, and deliberately not started.
+- Reading already-enabled slow logs is separately proposed in [SPEC-018](SPEC-018-php-fpm-slowlog-evidence.md) (Draft). It introduces bounded, privacy-preserving aggregation only. This SPEC-013 does not implement that behavior, and neither spec enables a slow log.
 - TBD: whether `sites` gains a PHP column.
 
 ## Acceptance criteria
