@@ -46,12 +46,16 @@ Do not repeat the README inside a spec. Reference it.
 
 | [SPEC-016](SPEC-016-wordpress-security-audit.md) | WordPress security audit — detect installations, verify core integrity, find suspicious files, inventory plugins and themes. **Read-only** | Draft |
 | [SPEC-017](SPEC-017-wordpress-quarantine-recovery.md) | WordPress quarantine and recovery — reversible removal of a reviewed file, restore and purge. **Writes under `/www/`; blocked on ADR-010** | Draft (blocked) |
+| [SPEC-018](SPEC-018-php-fpm-slowlog-evidence.md) | PHP-FPM slowlog evidence — read existing slow traces with privacy limits, without claiming a root cause | Draft |
+| [SPEC-019](SPEC-019-wordpress-cache-runtime-audit.md) | WordPress cache audit — on-demand, read-only W3TC/page-cache configuration checks | Draft |
 
 SPEC-010 to SPEC-015 close the gap the first production server exposed: a load
 rise caused by a host resource was invisible, and indistinguishable from a load
 rise with no cause in the logs. They are drafts — nothing in them is
 implemented, and the thresholds in SPEC-012 are less validated than any number
 already in the project.
+
+SPEC-018 and SPEC-019 are optional diagnostic additions prompted by the 2026-10-17 incident. They do not replace or implement SPEC-010 to SPEC-015. SPEC-018 resolves the already-recorded slowlog TBD in SPEC-013; SPEC-019 audits local WordPress configuration only on demand. Both preserve the read-only guarantee.
 
 SPEC-016 and SPEC-017 open a **second domain**: security rather than
 performance. They are deliberately split, because SPEC-016 is read-only like
