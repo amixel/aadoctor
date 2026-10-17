@@ -1770,6 +1770,46 @@ share the word `restore`.
 
 ---
 
+## Next diagnostics — October 2026 field findings (Draft specs; not implemented)
+
+### AAD-150 — Read existing PHP-FPM slow logs
+Status: Planned
+Phase: 12
+Priority: High
+Related spec: [SPEC-018](specs/SPEC-018-php-fpm-slowlog-evidence.md)
+Dependencies: AAD-100 (SPEC-013 discovery), AAD-012 (incremental log reader)
+
+Goal: Add bounded, incremental reading of configured slow logs, with frame classification and unambiguous coverage states. Never change PHP settings or attribute server load to a frame alone.
+
+### AAD-151 — Expose slowlog evidence in existing diagnosis
+Status: Planned
+Phase: 12
+Priority: Medium
+Related spec: [SPEC-018](specs/SPEC-018-php-fpm-slowlog-evidence.md)
+Dependencies: AAD-150, SPEC-015 coverage vocabulary
+
+Goal: Show aggregated slow samples and mapping uncertainty alongside PHP-FPM events during incidents, without storing raw stack traces, query strings or introducing new causal findings.
+
+### AAD-152 — Inspect WordPress cache configuration safely
+Status: Planned
+Phase: 12
+Priority: Medium
+Related spec: [SPEC-019](specs/SPEC-019-wordpress-cache-runtime-audit.md)
+Dependencies: AAD-010 (site discovery)
+
+Goal: On explicit request, report `WP_CACHE`, W3TC allowlisted configuration, and drop-in presence without running PHP, touching the database or leaking configuration secrets.
+
+### AAD-153 — CLI cache audit and migration discrepancy report
+Status: Planned
+Phase: 12
+Priority: Medium
+Related spec: [SPEC-019](specs/SPEC-019-wordpress-cache-runtime-audit.md)
+Dependencies: AAD-152, coordination with SPEC-016 CLI
+
+Goal: Provide `aadoctor wp cache --site <domain>` as a read-only manual check. Distinguish disabled cache, absent config, stale drop-ins and unknown CDN behavior. No automatic remediation.
+
+---
+
 ## Parking Lot
 
 Deferred on purpose. Each needs a decision, and usually an ADR, before moving up.
